@@ -102,6 +102,14 @@ public class ClawRepl {
             case "/continue" -> {
                 terminal.writer().println("Continuing last conversation...");
                 terminal.flush();
+                try {
+                    String response = context.engine().continue_();
+                    terminal.writer().println(response);
+                    terminal.writer().println();
+                } catch (Exception e) {
+                    terminal.writer().println("Error: " + e.getMessage());
+                }
+                terminal.flush();
                 yield false;
             }
             default -> handleDefault(line, terminal);

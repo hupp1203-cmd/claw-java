@@ -12,6 +12,10 @@ import com.claw.tools.builtin.GrepTool;
 import com.claw.tools.builtin.ReadFileTool;
 import com.claw.tools.builtin.WriteFileTool;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
@@ -21,6 +25,8 @@ import java.util.Map;
  * Bridges the claw-core model types to the claw-provider SPI types.
  */
 public class ClawContext {
+
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private Provider provider;
     private ToolRegistry toolRegistry;
@@ -120,30 +126,33 @@ public class ClawContext {
 
     /** Convert ProviderResponse to raw JSON string for AgentLoop.parseResponse(). */
     private static String toRawJson(ProviderResponse resp) {
-        if (resp instanceof ProviderResponse.TextResponse tr) {
-            return "{\"choices\":[{\"message\":{\"content\":\"" + escapeJson(tr.content()) + "\"}}]}";
-        } else if (resp instanceof ProviderResponse.ToolCallResponse tcr) {
-            var sb = new StringBuilder();
-            sb.append("{\"choices\":[{\"message\":{\"tool_calls\":[");
-            var tcs = tcr.toolCalls();
-            for (int i = 0; i < tcs.size(); i++) {
-                if (i > 0) sb.append(",");
-                var tc = tcs.get(i);
-                sb.append("{\"id\":\"").append(tc.id()).append("\",");
-                sb.append("\"type\":\"function\",");
-                sb.append("\"function\":{\"name\":\"").append(tc.name()).append("\",");
-                sb.append("\"arguments\":\"").append(escapeJson(tc.arguments().toString())).append("\"}}");
+        try {
+            if (resp instanceof ProviderResponse.TextResponse tr) {
+                ObjectNode root = JSON.createObjectNode();
+                ArrayNode choices = root.putArray("choices");
+                ObjectNode choice = choices.addObject();
+                ObjectNode message = choice.putObject("message");
+                message.put("content", tr.content());
+                return JSON.writeValueAsString(root);
+            } else if (resp instanceof ProviderResponse.ToolCallResponse tcr) {
+                ObjectNode root = JSON.createObjectNode();
+                ArrayNode choices = root.putArray("choices");
+                ObjectNode message = choices.addObject().putObject("message");
+                ArrayNode tcArray = message.putArray("tool_calls");
+                for (var tc : tcr.toolCalls()) {
+                    ObjectNode tcNode = tcArray.addObject();
+                    tcNode.put("id", tc.id());
+                    tcNode.put("type", "function");
+                    ObjectNode fn = tcNode.putObject("function");
+                    fn.put("name", tc.name());
+                    fn.put("arguments", JSON.writeValueAsString(tc.arguments()));
+                }
+                return JSON.writeValueAsString(root);
             }
-            sb.append("]}}]}");
-            return sb.toString();
+            return "{}";
+        } catch (Exception e) {
+            return "{}";
         }
-        return "{}";
-    }
-
-    private static String escapeJson(String s) {
-        if (s == null) return "";
-        return s.replace("\\", "\\\\").replace("\"", "\\\"")
-                .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
     }
 
     private static List<ProviderRequest.ToolDef> toToolDefs(List<Tool> tools) {

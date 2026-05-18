@@ -2,7 +2,9 @@ package com.claw.tools.builtin;
 
 import com.claw.tools.Tool;
 
+import java.io.BufferedInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -90,13 +92,13 @@ public class GrepTool implements Tool {
             try (Stream<Path> stream = Files.walk(startPath, MAX_DEPTH)) {
                 List<Path> files = stream
                     .filter(Files::isRegularFile)
-                    .filter(p -> !isBinary(p))
                     .filter(p -> pathMatcher == null || pathMatcher.matches(p.getFileName()))
                     .sorted()
                     .toList();
 
                 for (Path file : files) {
                     if (matchCount[0] >= MAX_MATCHES) break;
+                    if (isBinary(file)) continue;
                     grepFile(file, pattern, results, matchCount, MAX_MATCHES);
                 }
             }
@@ -130,13 +132,11 @@ public class GrepTool implements Tool {
     }
 
     private boolean isBinary(Path file) {
-        try {
-            byte[] bytes = Files.readAllBytes(file);
-            int checkLen = Math.min(bytes.length, 1024);
-            for (int i = 0; i < checkLen; i++) {
-                if (bytes[i] == 0) {
-                    return true;
-                }
+        try (InputStream in = new BufferedInputStream(Files.newInputStream(file))) {
+            byte[] buf = new byte[1024];
+            int read = in.read(buf);
+            for (int i = 0; i < read; i++) {
+                if (buf[i] == 0) return true;
             }
             return false;
         } catch (IOException e) {

@@ -2,6 +2,7 @@ package com.claw.tools.builtin;
 
 import com.claw.tools.Tool;
 
+import java.io.BufferedReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -68,22 +69,28 @@ public class ReadFileTool implements Tool {
         if (offset < 1) offset = 1;
         if (limit < 1) limit = 1;
 
-        List<String> lines = Files.readAllLines(path);
-
-        if (offset > lines.size()) {
-            return "Error: offset " + offset + " exceeds file length " + lines.size();
-        }
-
-        int end = Math.min(offset + limit - 1, lines.size());
         StringBuilder sb = new StringBuilder();
+        int lineCount = 0;
+        int linesRead = 0;
 
-        for (int i = offset - 1; i < end; i++) {
-            sb.append(i + 1).append("|").append(lines.get(i)).append("\n");
+        try (BufferedReader reader = Files.newBufferedReader(path)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                lineCount++;
+                if (lineCount < offset) continue;
+                if (linesRead >= limit) break;
+                sb.append(lineCount).append("|").append(line).append("\n");
+                linesRead++;
+            }
         }
 
-        if (end < lines.size()) {
+        if (lineCount < offset) {
+            return "Error: offset " + offset + " exceeds file length " + lineCount;
+        }
+
+        if (linesRead >= limit && lineCount > offset + limit - 1) {
             sb.append("... (truncated, ")
-              .append(lines.size() - end)
+              .append(lineCount - offset - limit + 1)
               .append(" more lines)\n");
         }
 

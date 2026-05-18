@@ -15,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * The core agent turn loop — the heart of the Claw engine.
@@ -233,11 +234,11 @@ public class AgentLoop {
     }
 
     @SuppressWarnings("unchecked")
-    private java.util.Optional<ToolCall> parseOpenAIToolCall(JsonNode node) {
+    private Optional<ToolCall> parseOpenAIToolCall(JsonNode node) {
         try {
             String id = node.path("id").asText();
             JsonNode function = node.get("function");
-            if (function == null) return java.util.Optional.empty();
+            if (function == null) return Optional.empty();
             String name = function.path("name").asText();
             String argsStr = function.path("arguments").asText();
             Map<String, Object> args;
@@ -248,10 +249,10 @@ public class AgentLoop {
             } catch (Exception e) {
                 args = Map.of();
             }
-            return java.util.Optional.of(new ToolCall(id, name, args));
+            return Optional.of(new ToolCall(id, name, args));
         } catch (Exception e) {
             log.warn("Failed to parse tool call node: {}", e.getMessage());
-            return java.util.Optional.empty();
+            return Optional.empty();
         }
     }
 

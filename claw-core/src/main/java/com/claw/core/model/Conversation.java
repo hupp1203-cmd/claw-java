@@ -33,6 +33,8 @@ public class Conversation {
 
     private final List<Message> messages;
     private String systemPrompt;
+    private long cachedTotalChars;
+    private boolean totalCharsDirty = true;
 
     /** Creates an empty conversation. */
     public Conversation() {
@@ -55,6 +57,7 @@ public class Conversation {
     public Conversation addMessage(Message message) {
         Objects.requireNonNull(message, "message must not be null");
         messages.add(message);
+        totalCharsDirty = true;
         log.debug("Added message role={} totalMessages={}", message.role(), messages.size());
         return this;
     }
@@ -78,6 +81,7 @@ public class Conversation {
     /** Removes all messages from the conversation. */
     public void clear() {
         messages.clear();
+        totalCharsDirty = true;
     }
 
     // --- System prompt ---
@@ -85,6 +89,7 @@ public class Conversation {
     /** Sets the system prompt to inject at the start of every model call. */
     public void setSystemPrompt(String prompt) {
         this.systemPrompt = prompt;
+        totalCharsDirty = true;
     }
 
     /** Returns the current system prompt, or {@code null} if none is set. */
@@ -127,9 +132,12 @@ public class Conversation {
 
     /** Total character count across all messages (for threshold checks). */
     public long totalCharacterCount() {
-        long total = messages.stream().mapToLong(Conversation::messageCharCount).sum();
-        if (systemPrompt != null) total += systemPrompt.length();
-        return total;
+        if (totalCharsDirty) {
+            cachedTotalChars = messages.stream().mapToLong(Conversation::messageCharCount).sum();
+            if (systemPrompt != null) cachedTotalChars += systemPrompt.length();
+            totalCharsDirty = false;
+        }
+        return cachedTotalChars;
     }
 
     private static long messageCharCount(Message m) {
@@ -192,6 +200,7 @@ public class Conversation {
                 + " messages summarized. Continuing with most recent context.]";
         messages.add(removeStart, Message.system(summary));
 
+        totalCharsDirty = true;
         log.info("Compacted conversation: removed {} messages, kept {} recent, total now {}",
                 removed.size(), keepRecent, messages.size());
     }
