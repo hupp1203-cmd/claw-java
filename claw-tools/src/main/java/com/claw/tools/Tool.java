@@ -1,0 +1,26 @@
+package com.claw.tools;
+
+import java.util.Map;
+
+/**
+ * Interface for callable tools that agents can invoke.
+ */
+public interface Tool {
+
+    /** Unique name of this tool. */
+    String name();
+
+    /** Human-readable description of what this tool does. */
+    String description();
+
+    /**
+     * JSON Schema describing the parameters this tool accepts.
+     * Uses standard JSON Schema format with "type", "properties", and "required" keys.
+     */
+    Map<String, Object> parametersSchema();
+
+    /**
+     * Execute the tool with the given arguments and return the result as a string.
+     */
+    String execute(Map<String, Object> arguments) throws Exception;
+}
