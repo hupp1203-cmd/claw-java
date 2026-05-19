@@ -1,5 +1,7 @@
 package com.claw.provider;
 
+import com.claw.core.model.Message;
+import com.claw.core.model.ToolCall;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -31,7 +33,7 @@ import java.util.function.Consumer;
  *
  * <p>Subclasses need only supply their API URL, environment variable name,
  * name string, and supported models list. All HTTP I/O, SSE parsing, and
- * request building is handled here.
+ * request building is handled here.</p>
  */
 public abstract class OpenAiCompatibleProvider implements Provider {
 
@@ -142,7 +144,7 @@ public abstract class OpenAiCompatibleProvider implements Provider {
 
             private void deliverResult() {
                 if (!toolCallDeltas.isEmpty()) {
-                    List<ProviderRequest.ToolCall> calls = new ArrayList<>();
+                    List<ToolCall> calls = new ArrayList<>();
                     for (ToolCallDelta tcd : toolCallDeltas.values()) {
                         Map<String, Object> args;
                         try {
@@ -151,7 +153,7 @@ public abstract class OpenAiCompatibleProvider implements Provider {
                             log.warn("Failed to parse tool call arguments: {}", e.getMessage());
                             args = Collections.emptyMap();
                         }
-                        calls.add(new ProviderRequest.ToolCall(tcd.id, tcd.name, args));
+                        calls.add(new ToolCall(tcd.id, tcd.name, args));
                     }
                     if (onComplete != null) {
                         onComplete.accept(new ProviderResponse.ToolCallResponse(
@@ -172,7 +174,7 @@ public abstract class OpenAiCompatibleProvider implements Provider {
         }
     }
 
-    // --- Request building ---
+    // --- Request building (uses core Message types) ---
 
     private Request buildRequest(ProviderRequest pr, boolean stream) {
         ObjectNode body = MAPPER.createObjectNode();
@@ -185,10 +187,10 @@ public abstract class OpenAiCompatibleProvider implements Provider {
         ArrayNode messagesArray = body.putArray("messages");
         for (var msg : pr.messages()) {
             ObjectNode m = messagesArray.addObject();
-            m.put("role", msg.role());
-            if (msg.name() != null) m.put("name", msg.name());
+            m.put("role", msg.role().name().toLowerCase());
 
-            if (msg.toolCalls() != null && !msg.toolCalls().isEmpty()) {
+            // Assistant message with tool calls
+            if (msg.hasToolCalls()) {
                 ArrayNode tcArray = m.putArray("tool_calls");
                 for (var tc : msg.toolCalls()) {
                     ObjectNode tcNode = tcArray.addObject();
@@ -202,12 +204,22 @@ public abstract class OpenAiCompatibleProvider implements Provider {
                         fn.put("arguments", "{}");
                     }
                 }
-            } else if (msg.toolCallId() != null) {
-                m.put("tool_call_id", msg.toolCallId());
+                // Include text content if present
+                String text = msg.textContent();
+                if (text != null && !text.isBlank()) {
+                    m.put("content", text);
+                }
             }
-
-            if (msg.content() != null) {
-                m.put("content", msg.content());
+            // Tool result message
+            else if (msg.toolCallId() != null) {
+                m.put("tool_call_id", msg.toolCallId());
+                String content = msg.textContent();
+                if (content != null) m.put("content", content);
+            }
+            // Regular text message
+            else {
+                String content = msg.textContent();
+                if (content != null) m.put("content", content);
             }
         }
 

@@ -1,5 +1,6 @@
 package com.claw.tools;
 
+import java.nio.file.Path;
 import java.util.Map;
 
 /**
@@ -23,4 +24,13 @@ public interface Tool {
      * Execute the tool with the given arguments and return the result as a string.
      */
     String execute(Map<String, Object> arguments) throws Exception;
+
+    /**
+     * Returns the working directory for this tool's execution.
+     * Defaults to the current user directory. Override to restrict tool
+     * operations to a specific directory tree.
+     */
+    default Path workingDirectory() {
+        return Path.of(System.getProperty("user.dir"));
+    }
 }

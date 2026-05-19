@@ -56,6 +56,9 @@ public class ReadFileTool implements Tool {
         }
 
         Path path = Path.of(pathStr);
+        if (!path.isAbsolute()) {
+            path = workingDirectory().resolve(path).normalize();
+        }
         if (!Files.exists(path)) {
             return "Error: File not found: " + pathStr;
         }

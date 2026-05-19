@@ -13,6 +13,11 @@
     <description>Model provider abstraction: Anthropic, OpenAI, DeepSeek adapters</description>
     <dependencies>
         <dependency>
+            <groupId>com.claw</groupId>
+            <artifactId>claw-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>okhttp</artifactId>
         </dependency>

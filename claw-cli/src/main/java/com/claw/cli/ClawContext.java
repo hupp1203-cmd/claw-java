@@ -2,31 +2,33 @@ package com.claw.cli;
 
 import com.claw.core.AgentConfig;
 import com.claw.core.AgentLoop;
+import com.claw.core.AgentLoop.LoopResponse;
 import com.claw.core.QueryEngine;
+import com.claw.core.model.ToolCall;
 import com.claw.core.model.ToolResult;
 import com.claw.provider.*;
 import com.claw.tools.Tool;
 import com.claw.tools.ToolRegistry;
 import com.claw.tools.builtin.BashTool;
+import com.claw.tools.builtin.EditTool;
+import com.claw.tools.builtin.FindTool;
 import com.claw.tools.builtin.GrepTool;
 import com.claw.tools.builtin.ReadFileTool;
+import com.claw.tools.builtin.WebFetchTool;
 import com.claw.tools.builtin.WriteFileTool;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * Application context that wires together all components (manual DI).
- * Bridges the claw-core model types to the claw-provider SPI types.
+ *
+ * <p>Bridges {@code claw-provider} responses into the {@code claw-core}
+ * {@link LoopResponse} type used by {@link AgentLoop} — no more JSON
+ * round-trip or manual message conversion.</p>
  */
 public class ClawContext {
-
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     private Provider provider;
     private ToolRegistry toolRegistry;
@@ -63,15 +65,22 @@ public class ClawContext {
         var cfg = AgentConfig.of(model, config.provider(), config.maxTokens(),
                 config.systemPrompt(), config.maxToolRounds(), config.workingDirectory());
 
-        // Bridge: claw-core Message list → ProviderRequest → raw JSON string
-        AgentLoop.ProviderCallback providerCb = messages -> {
-            var req = new ProviderRequest(model,
-                    convertMessages(messages),
+        // Provider bridge: ProviderRequest (core types) → ProviderResponse → LoopResponse
+        AgentLoop.ProviderCallback providerCb = (messages, onToken) -> {
+            var req = new ProviderRequest(model, messages,
                     cfg.maxTokens(), 0.7,
                     toToolDefs(toolRegistry.listAll()));
             try {
-                ProviderResponse resp = provider.complete(req);
-                return toRawJson(resp);
+                // Use streaming if onToken is provided
+                if (onToken != null) {
+                    var result = new java.util.concurrent.atomic.AtomicReference<ProviderResponse>();
+                    provider.completeStreaming(req, onToken, result::set);
+                    ProviderResponse resp = result.get();
+                    return toLoopResponse(resp);
+                } else {
+                    ProviderResponse resp = provider.complete(req);
+                    return toLoopResponse(resp);
+                }
             } catch (IOException e) {
                 throw new AgentLoop.AgentLoopException("Provider error: " + e.getMessage(), e);
             } catch (InterruptedException e) {
@@ -80,7 +89,7 @@ public class ClawContext {
             }
         };
 
-        // Bridge: claw-core ToolCall → toolRegistry.execute()
+        // Tool bridge: core ToolCall → registry lookup
         AgentLoop.ToolExecutor toolExec = call -> {
             try {
                 String result = toolRegistry.execute(call.name(), call.arguments());
@@ -93,108 +102,64 @@ public class ClawContext {
         return new QueryEngine(cfg, providerCb, toolExec);
     }
 
-    /** Convert claw-core Message list to ProviderRequest.Message list. */
-    private static List<ProviderRequest.Message> convertMessages(
-            List<com.claw.core.model.Message> messages) {
-        return messages.stream().map(m -> {
-            String content = extractTextContent(m);
-            List<ProviderRequest.ToolCall> toolCalls = m.toolCalls() != null
-                    ? m.toolCalls().stream()
-                        .map(tc -> new ProviderRequest.ToolCall(tc.id(), tc.name(), tc.arguments()))
-                        .toList()
-                    : null;
-            return new ProviderRequest.Message(
-                    m.role().name().toLowerCase(), content, null,
-                    toolCalls, m.toolCallId());
-        }).toList();
-    }
-
-    /** Extract text content from a claw-core Message. */
-    private static String extractTextContent(com.claw.core.model.Message msg) {
-        // Use the built-in textContent() convenience method
-        String text = msg.textContent();
-        if (text != null) return text;
-        // Fallback: if it's a ContentBlock, try to get text
-        if (msg.content() instanceof com.claw.core.model.Message.ContentBlock cb) {
-            if (cb instanceof com.claw.core.model.Message.TextBlock tb) {
-                return tb.text();
+    /** Bridge ProviderResponse → LoopResponse. */
+    private static LoopResponse toLoopResponse(ProviderResponse resp) {
+        return switch (resp) {
+            case ProviderResponse.TextResponse t -> new LoopResponse.Text(t.content());
+            case ProviderResponse.ToolCallResponse tc -> {
+                List<ToolCall> coreCalls = tc.toolCalls().stream()
+                        .map(c -> new ToolCall(c.id(), c.name(), c.arguments()))
+                        .toList();
+                yield new LoopResponse.ToolUse(null, coreCalls);
             }
-            return cb.toString();
-        }
-        return msg.content() != null ? msg.content().toString() : "";
+        };
     }
 
-    /** Convert ProviderResponse to raw JSON string for AgentLoop.parseResponse(). */
-    private static String toRawJson(ProviderResponse resp) {
-        try {
-            if (resp instanceof ProviderResponse.TextResponse tr) {
-                ObjectNode root = JSON.createObjectNode();
-                ArrayNode choices = root.putArray("choices");
-                ObjectNode choice = choices.addObject();
-                ObjectNode message = choice.putObject("message");
-                message.put("content", tr.content());
-                return JSON.writeValueAsString(root);
-            } else if (resp instanceof ProviderResponse.ToolCallResponse tcr) {
-                ObjectNode root = JSON.createObjectNode();
-                ArrayNode choices = root.putArray("choices");
-                ObjectNode message = choices.addObject().putObject("message");
-                ArrayNode tcArray = message.putArray("tool_calls");
-                for (var tc : tcr.toolCalls()) {
-                    ObjectNode tcNode = tcArray.addObject();
-                    tcNode.put("id", tc.id());
-                    tcNode.put("type", "function");
-                    ObjectNode fn = tcNode.putObject("function");
-                    fn.put("name", tc.name());
-                    fn.put("arguments", JSON.writeValueAsString(tc.arguments()));
-                }
-                return JSON.writeValueAsString(root);
-            }
-            return "{}";
-        } catch (Exception e) {
-            return "{}";
-        }
-    }
-
+    /** Convert Tool list to ProviderRequest.ToolDef list. */
     private static List<ProviderRequest.ToolDef> toToolDefs(List<Tool> tools) {
         return tools.stream()
-                .map(t -> new ProviderRequest.ToolDef(t.name(), t.description(),
-                        Map.of("type", "object", "properties", t.parametersSchema())))
+                .map(t -> new ProviderRequest.ToolDef(
+                        t.name(), t.description(), t.parametersSchema()))
                 .toList();
     }
 
     /**
-     * Create a default ClawContext. Auto-detects available API keys.
+     * Creates a default context with all built-in tools registered
+     * and the Anthropic provider as default.
      */
     public static ClawContext createDefault() {
-        Provider provider;
-        String model;
-
-        String ak = System.getenv("ANTHROPIC_API_KEY");
-        String ok = System.getenv("OPENAI_API_KEY");
-        String dk = System.getenv("DEEPSEEK_API_KEY");
-
-        if (ak != null && !ak.isBlank()) {
-            provider = new AnthropicProvider();
-            model = "claude-sonnet-4-20250514";
-        } else if (ok != null && !ok.isBlank()) {
-            provider = new OpenAiProvider();
-            model = "gpt-4o";
-        } else if (dk != null && !dk.isBlank()) {
-            provider = new DeepSeekProvider();
-            model = "deepseek-chat";
-        } else {
-            provider = new AnthropicProvider();
-            model = "claude-sonnet-4-20250514";
+        ProviderRegistry.register(new AnthropicProvider());
+        try {
+            ProviderRegistry.register(new DeepSeekProvider());
+        } catch (IllegalStateException e) {
+            // DEEPSEEK_API_KEY not set — skip
+        }
+        try {
+            ProviderRegistry.register(new OpenAiProvider());
+        } catch (IllegalStateException e) {
+            // OPENAI_API_KEY not set — skip
         }
 
-        ToolRegistry registry = new ToolRegistry();
+        // Pick first available provider
+        String defaultProvider = ProviderRegistry.listAll().isEmpty()
+                ? "anthropic"
+                : ProviderRegistry.listAll().getFirst();
+        String defaultModel = switch (defaultProvider) {
+            case "deepseek" -> "deepseek-chat";
+            case "openai" -> "gpt-4o";
+            default -> "claude-sonnet-4-20250514";
+        };
+
+        var registry = new ToolRegistry();
         registry.register(new BashTool());
         registry.register(new ReadFileTool());
         registry.register(new WriteFileTool());
         registry.register(new GrepTool());
+        registry.register(new EditTool());
+        registry.register(new WebFetchTool());
+        registry.register(new FindTool());
 
-        AgentConfig cfg = AgentConfig.of(model, provider.name());
-
-        return new ClawContext(provider, registry, cfg, model);
+        var cfg = AgentConfig.of(defaultModel, defaultProvider);
+        return new ClawContext(ProviderRegistry.defaultProvider(), registry, cfg, defaultModel);
     }
 }

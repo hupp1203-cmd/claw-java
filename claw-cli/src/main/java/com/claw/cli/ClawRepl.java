@@ -1,7 +1,6 @@
 package com.claw.cli;
 
 import com.claw.tools.Tool;
-
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
@@ -9,64 +8,96 @@ import org.jline.reader.UserInterruptException;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 
+import java.io.IOException;
+
 /**
- * JLine-based interactive REPL for Claw.
- * Provides command parsing, tool listing, model switching, and conversation features.
+ * Interactive REPL using JLine for rich terminal I/O.
+ *
+ * <p>Supports:
+ * <ul>
+ *   <li>Multi-turn conversation with the agent</li>
+ *   <li>Streaming token output (real-time rendering)</li>
+ *   <li>Slash commands: /help, /exit, /model, /tools, /clear, /continue</li>
+ *   <li>Multi-line input with {@code \} line continuation</li>
+ * </ul>
  */
 public class ClawRepl {
 
-    private static final String PROMPT = "claw> ";
-
     private final ClawContext context;
+    private final Terminal terminal;
+    private final LineReader reader;
 
+    /** Creates a REPL for the given context. */
     public ClawRepl(ClawContext context) {
         this.context = context;
+        try {
+            this.terminal = TerminalBuilder.builder()
+                    .system(true)
+                    .dumb(true)  // fallback for non-TTY environments
+                    .build();
+            this.reader = LineReaderBuilder.builder()
+                    .terminal(terminal)
+                    .build();
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to initialize JLine terminal", e);
+        }
     }
 
+    // --- Main loop ---
+
     /**
-     * Start the REPL loop. Blocks until the user exits.
+     * Starts the interactive REPL loop.
+     * Blocks until the user types {@code /exit} or sends EOF.
      */
     public void start() {
-        try {
-            Terminal terminal = TerminalBuilder.builder()
-                .system(true)
-                .build();
+        printBanner(terminal);
 
-            LineReader reader = LineReaderBuilder.builder()
-                .terminal(terminal)
-                .build();
+        // Enable streaming output
+        context.engine().setOnToken(token -> {
+            terminal.writer().print(token);
+            terminal.flush();
+        });
 
-            printBanner(terminal);
+        while (true) {
+            try {
+                String prompt = context.model() + "> ";
+                String line = reader.readLine(prompt);
 
-            while (true) {
-                String line = null;
-                try {
-                    line = reader.readLine(PROMPT);
-                } catch (UserInterruptException e) {
-                    terminal.writer().println("^C");
+                if (line == null) {
+                    // EOF
+                    terminal.writer().println("Goodbye!");
                     terminal.flush();
-                    continue;
-                } catch (EndOfFileException e) {
-                    terminal.writer().println("exit");
-                    terminal.flush();
-                    break;
+                    return;
                 }
-
-                if (line == null) break;
 
                 line = line.trim();
                 if (line.isEmpty()) continue;
 
-                if (handleCommand(line, terminal)) {
-                    break;
+                // Handle multi-line input (trailing backslash)
+                while (line.endsWith("\\")) {
+                    line = line.substring(0, line.length() - 1);
+                    String next = reader.readLine("... ");
+                    if (next == null) break;
+                    line += "\n" + next;
                 }
-            }
 
-            terminal.close();
-        } catch (Exception e) {
-            System.err.println("Error starting REPL: " + e.getMessage());
+                // Process command or chat
+                if (handleCommand(line, terminal)) {
+                    return; // exit
+                }
+
+            } catch (UserInterruptException e) {
+                terminal.writer().println("^C (type /exit to quit)");
+                terminal.flush();
+            } catch (EndOfFileException e) {
+                terminal.writer().println("Goodbye!");
+                terminal.flush();
+                return;
+            }
         }
     }
+
+    // --- Banner ---
 
     private void printBanner(Terminal terminal) {
         terminal.writer().println("""
@@ -80,6 +111,8 @@ public class ClawRepl {
         terminal.writer().println();
         terminal.flush();
     }
+
+    // --- Command handling ---
 
     /**
      * Handle a command line. Returns true if the REPL should exit.
@@ -95,6 +128,10 @@ public class ClawRepl {
             case "/tools" -> { showTools(terminal); yield false; }
             case "/clear" -> {
                 context.clearConversation();
+                context.engine().setOnToken(token -> {
+                    terminal.writer().print(token);
+                    terminal.flush();
+                });
                 terminal.writer().println("Conversation cleared.");
                 terminal.flush();
                 yield false;
@@ -130,7 +167,7 @@ public class ClawRepl {
 
     private void showHelp(Terminal terminal) {
         terminal.writer().print("""
-            Claw Commands:
+            Commands:
               /exit, /quit    Exit Claw
               /help           Show this help message
               /model <name>   Switch to a different model
@@ -157,6 +194,10 @@ public class ClawRepl {
             return;
         }
         context.setModel(modelName);
+        context.engine().setOnToken(token -> {
+            terminal.writer().print(token);
+            terminal.flush();
+        });
         terminal.writer().println("Switched to model: " + modelName);
         terminal.flush();
     }
@@ -164,11 +205,12 @@ public class ClawRepl {
     private void chat(Terminal terminal, String userMessage) {
         try {
             String response = context.engine().chat(userMessage);
-            terminal.writer().println(response);
+            // Print a newline after streaming output for separation
             terminal.writer().println();
+            terminal.flush();
         } catch (Exception e) {
             terminal.writer().println("Error: " + e.getMessage());
+            terminal.flush();
         }
-        terminal.flush();
     }
 }

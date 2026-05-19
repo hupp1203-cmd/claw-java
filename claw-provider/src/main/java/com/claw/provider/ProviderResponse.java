@@ -1,5 +1,6 @@
 package com.claw.provider;
 
+import com.claw.core.model.ToolCall;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -22,8 +23,8 @@ public sealed interface ProviderResponse {
     /** A text-only completion. */
     record TextResponse(String content) implements ProviderResponse {}
 
-    /** A tool-call-only completion. */
-    record ToolCallResponse(List<ProviderRequest.ToolCall> toolCalls) implements ProviderResponse {}
+    /** A tool-call-only completion, using the canonical {@link ToolCall} from claw-core. */
+    record ToolCallResponse(List<ToolCall> toolCalls) implements ProviderResponse {}
 
     /**
      * Parse a raw JSON response body into a {@link ProviderResponse}.
@@ -62,7 +63,7 @@ public sealed interface ProviderResponse {
     }
 
     private static ProviderResponse parseAnthropic(JsonNode content) {
-        List<ProviderRequest.ToolCall> toolCalls = new ArrayList<>();
+        List<ToolCall> toolCalls = new ArrayList<>();
         StringBuilder text = new StringBuilder();
 
         for (JsonNode block : content) {
@@ -77,7 +78,7 @@ public sealed interface ProviderResponse {
                 Map<String, Object> input = block.has("input")
                         ? MAPPER.convertValue(block.get("input"), Map.class)
                         : Collections.emptyMap();
-                toolCalls.add(new ProviderRequest.ToolCall(id, name, input));
+                toolCalls.add(new ToolCall(id, name, input));
             }
         }
 
@@ -90,7 +91,7 @@ public sealed interface ProviderResponse {
     private static ProviderResponse parseOpenAi(JsonNode message) {
         // Check for tool_calls
         if (message.has("tool_calls") && message.get("tool_calls").isArray()) {
-            List<ProviderRequest.ToolCall> toolCalls = new ArrayList<>();
+            List<ToolCall> toolCalls = new ArrayList<>();
             for (JsonNode tc : message.get("tool_calls")) {
                 String id = tc.has("id") ? tc.get("id").asText() : "";
                 JsonNode fn = tc.get("function");
@@ -106,7 +107,7 @@ public sealed interface ProviderResponse {
                         // leave as empty map
                     }
                 }
-                toolCalls.add(new ProviderRequest.ToolCall(id, name, arguments));
+                toolCalls.add(new ToolCall(id, name, arguments));
             }
             return new ToolCallResponse(Collections.unmodifiableList(toolCalls));
         }

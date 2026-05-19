@@ -4,11 +4,13 @@ import com.claw.core.model.Conversation;
 import com.claw.core.model.Message;
 import com.claw.core.model.ToolCall;
 import com.claw.core.model.ToolResult;
+import com.claw.core.permission.PermissionLevel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 /**
  * High-level orchestrator that wraps the {@link AgentLoop} with conversation
@@ -19,11 +21,16 @@ import java.util.UUID;
  * prompt injection, triggers automatic compaction when the context window
  * grows too large, and provides session save/restore hooks.</p>
  *
+ * <h3>Streaming</h3>
+ * Set a {@link #setOnToken(Consumer) token callback} to receive streaming
+ * text tokens in real-time. The callback is invoked for each token as it
+ * arrives from the provider.
+ *
  * <h3>Typical Usage</h3>
  * <pre>{@code
  * var engine = new QueryEngine(config, provider, toolExecutor);
+ * engine.setOnToken(token -> terminal.print(token));
  * String reply = engine.chat("What files are in this directory?");
- * String followUp = engine.continue_("Show me the contents of pom.xml");
  * }</pre>
  *
  * @see AgentLoop
@@ -41,6 +48,7 @@ public class QueryEngine {
     private final Conversation conversation;
     private final String sessionId;
     private boolean systemPromptInjected;
+    private Consumer<String> onToken;
 
     /**
      * Creates a new query engine.
@@ -52,13 +60,33 @@ public class QueryEngine {
     public QueryEngine(AgentConfig config,
                        AgentLoop.ProviderCallback provider,
                        AgentLoop.ToolExecutor toolExecutor) {
+        this(config, provider, toolExecutor, PermissionLevel.ALLOW_ALL);
+    }
+
+    /**
+     * Creates a new query engine with a specific permission level.
+     */
+    public QueryEngine(AgentConfig config,
+                       AgentLoop.ProviderCallback provider,
+                       AgentLoop.ToolExecutor toolExecutor,
+                       PermissionLevel permissionLevel) {
         this.config = Objects.requireNonNull(config, "config must not be null");
         this.provider = Objects.requireNonNull(provider, "provider must not be null");
         this.toolExecutor = Objects.requireNonNull(toolExecutor, "toolExecutor must not be null");
-        this.loop = new AgentLoop(config);
+        this.loop = new AgentLoop(config, permissionLevel);
         this.conversation = new Conversation();
         this.sessionId = UUID.randomUUID().toString();
         this.systemPromptInjected = false;
+    }
+
+    // --- Streaming callback ---
+
+    /**
+     * Sets the callback for streaming text tokens.
+     * Call before {@link #chat(String)} to enable real-time output.
+     */
+    public void setOnToken(Consumer<String> onToken) {
+        this.onToken = onToken;
     }
 
     // --- Public API ---
@@ -94,8 +122,8 @@ public class QueryEngine {
         // Add user message
         conversation.addMessage(Message.user(userMessage));
 
-        // Run the agent loop
-        String response = loop.run(conversation, provider, toolExecutor);
+        // Run the agent loop with optional streaming
+        String response = loop.run(conversation, provider, toolExecutor, onToken);
 
         log.debug("chat complete: {} messages, {} chars response",
                 conversation.messageCount(), response.length());
@@ -124,7 +152,7 @@ public class QueryEngine {
             conversation.compact();
         }
 
-        return loop.run(conversation, provider, toolExecutor);
+        return loop.run(conversation, provider, toolExecutor, onToken);
     }
 
     /**

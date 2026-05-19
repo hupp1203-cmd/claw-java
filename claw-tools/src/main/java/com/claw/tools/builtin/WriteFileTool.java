@@ -54,6 +54,9 @@ public class WriteFileTool implements Tool {
         }
 
         Path path = Path.of(pathStr);
+        if (!path.isAbsolute()) {
+            path = workingDirectory().resolve(path).normalize();
+        }
         Path parent = path.getParent();
         if (parent != null) {
             Files.createDirectories(parent);

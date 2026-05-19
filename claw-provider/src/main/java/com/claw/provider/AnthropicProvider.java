@@ -1,5 +1,7 @@
 package com.claw.provider;
 
+import com.claw.core.model.Message;
+import com.claw.core.model.ToolCall;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -32,7 +34,7 @@ import java.util.function.Consumer;
  * <p>Uses {@code ANTHROPIC_API_KEY} from the environment and calls
  * {@code POST https://api.anthropic.com/v1/messages}.
  * Supports both synchronous and streaming (SSE) completions,
- * including tool-use block parsing.
+ * including tool-use block parsing.</p>
  */
 public final class AnthropicProvider implements Provider {
 
@@ -54,8 +56,6 @@ public final class AnthropicProvider implements Provider {
                 .callTimeout(Duration.ofSeconds(120))
                 .build();
     }
-
-    // --- Provider implementation ---
 
     @Override
     public String name() {
@@ -88,7 +88,7 @@ public final class AnthropicProvider implements Provider {
 
             private final StringBuilder textBuf = new StringBuilder();
             private final Map<Integer, ToolCallBuilder> toolCallBuilders = new HashMap<>();
-            private final List<ProviderRequest.ToolCall> completedToolCalls = new ArrayList<>();
+            private final List<ToolCall> completedToolCalls = new ArrayList<>();
 
             @Override
             public void onEvent(EventSource es, String id, String type, String data) {
@@ -129,11 +129,8 @@ public final class AnthropicProvider implements Provider {
                                 completedToolCalls.add(tcb.build());
                             }
                         }
-                        case "message_stop" -> {
-                            es.cancel(); // close the stream cleanly
-                        }
                         default -> {
-                            // message_start, ping, etc. — ignore
+                            // message_start, ping, message_stop etc. — ignore
                         }
                     }
                 } catch (Exception e) {
@@ -180,7 +177,7 @@ public final class AnthropicProvider implements Provider {
         );
     }
 
-    // --- Private helpers ---
+    // --- Request building (uses core Message types) ---
 
     private Request buildRequest(ProviderRequest pr, boolean stream) {
         ObjectNode body = MAPPER.createObjectNode();
@@ -190,22 +187,30 @@ public final class AnthropicProvider implements Provider {
 
         ArrayNode messagesArray = body.putArray("messages");
 
-        // Anthropic expects system prompt as a top-level "system" field, not in messages
+        // Anthropic expects system prompt as a top-level "system" field
         for (var msg : pr.messages()) {
-            if ("system".equals(msg.role())) {
-                if (msg.content() != null) {
+            if (msg.role() == Message.Role.SYSTEM) {
+                String sysContent = msg.textContent();
+                if (sysContent != null && !sysContent.isBlank()) {
                     if (body.has("system")) {
-                        // Append to existing system prompt
-                        body.put("system", body.get("system").asText() + "\n" + msg.content());
+                        body.put("system", body.get("system").asText() + "\n" + sysContent);
                     } else {
-                        body.put("system", msg.content());
+                        body.put("system", sysContent);
                     }
                 }
             } else {
                 ObjectNode m = messagesArray.addObject();
-                m.put("role", msg.role());
-                if (msg.toolCalls() != null && !msg.toolCalls().isEmpty()) {
+                m.put("role", msg.role().name().toLowerCase());
+
+                // Assistant message with tool calls
+                if (msg.hasToolCalls()) {
                     ArrayNode toolCallsNode = m.putArray("content");
+                    String textContent = msg.textContent();
+                    if (textContent != null && !textContent.isBlank()) {
+                        ObjectNode tcNode = toolCallsNode.addObject();
+                        tcNode.put("type", "text");
+                        tcNode.put("text", textContent);
+                    }
                     for (var tc : msg.toolCalls()) {
                         ObjectNode tcNode = toolCallsNode.addObject();
                         tcNode.put("type", "tool_use");
@@ -213,13 +218,21 @@ public final class AnthropicProvider implements Provider {
                         tcNode.put("name", tc.name());
                         tcNode.set("input", MAPPER.valueToTree(tc.arguments()));
                     }
-                } else if (msg.toolCallId() != null) {
+                }
+                // Tool result message
+                else if (msg.toolCallId() != null) {
                     ObjectNode toolResult = m.putObject("content");
                     toolResult.put("type", "tool_result");
                     toolResult.put("tool_use_id", msg.toolCallId());
-                    toolResult.put("content", msg.content() != null ? msg.content() : "");
-                } else if (msg.content() != null) {
-                    m.put("content", msg.content());
+                    String content = msg.textContent();
+                    toolResult.put("content", content != null ? content : "");
+                }
+                // Regular text message
+                else {
+                    String content = msg.textContent();
+                    if (content != null) {
+                        m.put("content", content);
+                    }
                 }
             }
         }
@@ -251,7 +264,7 @@ public final class AnthropicProvider implements Provider {
                 .build();
     }
 
-    private static IOException apiError(Response response) {
+    private IOException apiError(Response response) {
         String body = "";
         try {
             if (response.body() != null) body = response.body().string();
@@ -267,33 +280,34 @@ public final class AnthropicProvider implements Provider {
         return val;
     }
 
-    // --- Tool call builder for streaming ---
+    // --- Helper for streaming tool call accumulation ---
 
     private static final class ToolCallBuilder {
         private final String id;
         private final String name;
-        private final StringBuilder jsonBuf = new StringBuilder();
+        private final StringBuilder arguments = new StringBuilder();
 
         ToolCallBuilder(String id, String name) {
             this.id = id;
             this.name = name;
         }
 
-        void appendJson(String partial) {
-            jsonBuf.append(partial);
+        void appendJson(String fragment) {
+            arguments.append(fragment);
         }
 
-        ProviderRequest.ToolCall build() {
-            Map<String, Object> args;
-            try {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> parsed = MAPPER.readValue(jsonBuf.toString(), Map.class);
-                args = parsed;
-            } catch (Exception e) {
-                log.warn("Failed to parse tool call arguments: {}", e.getMessage());
-                args = Collections.emptyMap();
+        @SuppressWarnings("unchecked")
+        ToolCall build() {
+            Map<String, Object> args = Map.of();
+            String argsStr = arguments.toString();
+            if (!argsStr.isBlank()) {
+                try {
+                    args = MAPPER.readValue(argsStr, Map.class);
+                } catch (Exception e) {
+                    log.warn("Failed to parse tool call arguments: {}", argsStr);
+                }
             }
-            return new ProviderRequest.ToolCall(id, name, args);
+            return new ToolCall(id, name, args);
         }
     }
 }

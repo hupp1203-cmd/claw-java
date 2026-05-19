@@ -3,6 +3,8 @@ package com.claw.core.model;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.claw.core.TokenCounter;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -17,8 +19,9 @@ import java.util.Objects;
  * and a compaction mechanism to keep the context window manageable.</p>
  *
  * <h3>Token Estimation</h3>
- * Uses a simple heuristic: token count ≈ character count ÷ 4. This is
- * intentionally coarse — production systems would use a proper tokenizer.
+ * Delegates to {@link com.claw.core.TokenCounter} which uses jtokkit's
+ * CL100K_BASE encoding for accurate counting, falling back to the classic
+ * {@code charCount / 4} heuristic if jtokkit is unavailable at runtime.
  *
  * <h3>Compaction</h3>
  * When {@link #shouldCompact(int)} returns {@code true} the caller should
@@ -114,20 +117,19 @@ public class Conversation {
     // --- Token estimation ---
 
     /**
-     * Estimates the total token count using the simple heuristic of
-     * {@code characterCount / 4}.
+     * Estimates the total token count using {@link TokenCounter#countMessages(List)}
+     * for accurate counting when jtokkit is available, falling back to the
+     * classic {@code characterCount / 4} heuristic.
      *
-     * <p>Only considers text content for estimation. Tool call arguments
-     * are included in the count when serialized.</p>
+     * <p>Includes text content, structured content blocks, and tool call
+     * names/arguments. The system prompt is counted separately.</p>
      */
     public int estimateTokens() {
-        long totalChars = messages.stream()
-                .mapToLong(Conversation::messageCharCount)
-                .sum();
+        int tokens = TokenCounter.countMessages(messages);
         if (systemPrompt != null) {
-            totalChars += systemPrompt.length();
+            tokens += TokenCounter.count(systemPrompt);
         }
-        return (int) (totalChars / 4);
+        return tokens;
     }
 
     /** Total character count across all messages (for threshold checks). */

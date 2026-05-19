@@ -4,18 +4,14 @@ import com.claw.core.model.Conversation;
 import com.claw.core.model.Message;
 import com.claw.core.model.ToolCall;
 import com.claw.core.model.ToolResult;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.claw.core.permission.PermissionLevel;
+import com.claw.core.permission.PermissionManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
+import java.util.function.Consumer;
 
 /**
  * The core agent turn loop — the heart of the Claw engine.
@@ -25,20 +21,26 @@ import java.util.Optional;
  *
  * <ol>
  *   <li>Send the conversation (with system prompt) to the model provider.</li>
- *   <li>Parse the response: if it contains text, capture it; if it contains
- *       tool calls, execute them.</li>
+ *   <li>Parse the typed response: if it contains text, stream it and accumulate;
+ *       if it contains tool calls, execute them.</li>
  *   <li>Append results to the conversation and loop back to step 1.</li>
  *   <li>Stop when the model produces a text-only response (no tool calls)
  *       or the maximum tool round limit is reached.</li>
  * </ol>
+ *
+ * <h3>Streaming</h3>
+ * The {@link ProviderCallback} receives a {@link Consumer}{@code <String>} token
+ * callback. Providers that support streaming deliver tokens in real-time; the
+ * REPL can render them as they arrive for a responsive user experience.
  *
  * <h3>Usage</h3>
  * <pre>{@code
  * var loop = new AgentLoop(config);
  * String finalAnswer = loop.run(
  *     conversation,
- *     messages -> apiClient.complete(messages),
- *     toolCall -> toolRegistry.execute(toolCall)
+ *     (messages, onToken) -> provider.completeStreaming(...),
+ *     toolCall -> toolRegistry.execute(toolCall),
+ *     token -> terminal.print(token)   // optional streaming callback
  * );
  * }</pre>
  *
@@ -50,12 +52,18 @@ public class AgentLoop {
     private static final Logger log = LoggerFactory.getLogger(AgentLoop.class);
 
     private final AgentConfig config;
-    private final ObjectMapper json;
+    private final PermissionManager permissions;
 
     /** Creates a new agent loop with the given configuration. */
     public AgentLoop(AgentConfig config) {
         this.config = Objects.requireNonNull(config, "config must not be null");
-        this.json = new ObjectMapper();
+        this.permissions = new PermissionManager(PermissionLevel.ALLOW_ALL);
+    }
+
+    /** Creates a new agent loop with custom permission level. */
+    public AgentLoop(AgentConfig config, PermissionLevel permissionLevel) {
+        this.config = Objects.requireNonNull(config, "config must not be null");
+        this.permissions = new PermissionManager(permissionLevel);
     }
 
     // --- Public API ---
@@ -64,12 +72,15 @@ public class AgentLoop {
      * Runs the agent loop to completion.
      *
      * @param conversation the conversation state (mutated in place)
-     * @param provider     callback that sends messages to the model and returns the raw JSON response
+     * @param provider     callback that sends messages to the model and returns a typed response;
+     *                     receives an {@code onToken} consumer for streaming text delivery
      * @param toolExecutor callback that executes a {@link ToolCall} and returns the result
+     * @param onToken      consumer for streaming text tokens (may be {@code null} for non-streaming)
      * @return the final text response from the model (accumulated across rounds)
      * @throws AgentLoopException if the loop exceeds max rounds or encounters an unrecoverable error
      */
-    public String run(Conversation conversation, ProviderCallback provider, ToolExecutor toolExecutor)
+    public String run(Conversation conversation, ProviderCallback provider,
+                       ToolExecutor toolExecutor, Consumer<String> onToken)
             throws AgentLoopException {
 
         Objects.requireNonNull(conversation, "conversation must not be null");
@@ -83,52 +94,66 @@ public class AgentLoop {
 
             // 1. Build messages and call provider
             List<Message> messages = conversation.buildModelMessages();
-            String rawResponse;
+            LoopResponse response;
             try {
-                rawResponse = provider.complete(messages);
+                response = provider.complete(messages, onToken);
             } catch (Exception e) {
                 throw new AgentLoopException("Provider call failed in round " + (round + 1), e);
             }
 
-            if (rawResponse == null || rawResponse.isBlank()) {
-                log.warn("Provider returned empty response in round {}", round + 1);
-                break;
-            }
-
-            // 2. Parse the response
-            ParsedResponse parsed = parseResponse(rawResponse);
-
-            // 3. Accumulate text content
-            if (parsed.text != null && !parsed.text.isBlank()) {
-                responseBuilder.append(parsed.text);
-            }
-
-            // 4. If no tool calls, we're done
-            if (parsed.toolCalls.isEmpty()) {
-                conversation.addMessage(Message.assistant(parsed.text != null ? parsed.text : ""));
-                log.debug("Loop complete: no tool calls in round {}", round + 1);
-                break;
-            }
-
-            // 5. Add assistant message with tool calls
-            conversation.addMessage(new Message(Message.Role.ASSISTANT,
-                    parsed.text != null ? parsed.text : "", parsed.toolCalls));
-
-            // 6. Execute each tool call and append results
-            for (ToolCall tc : parsed.toolCalls) {
-                log.debug("Executing tool: {} (id={})", tc.name(), tc.id());
-                ToolResult result;
-                try {
-                    result = toolExecutor.execute(tc);
-                } catch (Exception e) {
-                    log.error("Tool execution failed: {} - {}", tc.name(), e.getMessage());
-                    result = ToolResult.error(tc.id(),
-                            "Tool execution error: " + e.getMessage());
+            // 2. Handle based on response type
+            switch (response) {
+                case LoopResponse.Text(var text) -> {
+                    // No tool calls — we're done
+                    responseBuilder.append(text);
+                    conversation.addMessage(Message.assistant(text));
+                    log.debug("Loop complete: text response in round {}", round + 1);
+                    return responseBuilder.toString();
                 }
-                conversation.addMessage(Message.tool(result.toolCallId(), result.content()));
+                case LoopResponse.ToolUse(var text, var toolCalls) -> {
+                    // Accumulate any text accompanying the tool calls
+                    if (text != null && !text.isBlank()) {
+                        responseBuilder.append(text);
+                    }
+
+                    if (toolCalls.isEmpty()) {
+                        // Edge case: text-only but wrapped in ToolUse
+                        conversation.addMessage(Message.assistant(text != null ? text : ""));
+                        return responseBuilder.toString();
+                    }
+
+                    // Add assistant message with tool calls
+                    conversation.addMessage(new Message(Message.Role.ASSISTANT,
+                            text != null ? text : "", toolCalls));
+
+                    // Execute each tool call and append results
+                    for (ToolCall tc : toolCalls) {
+                        log.debug("Executing tool: {} (id={})", tc.name(), tc.id());
+                        ToolResult result;
+
+                        // Check permissions
+                        if (!permissions.isAllowed(tc.name())) {
+                            result = ToolResult.error(tc.id(),
+                                    "Tool execution denied: permission level is NONE");
+                        } else if (permissions.shouldAsk(tc.name())) {
+                            result = ToolResult.error(tc.id(),
+                                    "Tool execution requires user confirmation: " + tc.name()
+                                    + " (permission level is ASK)");
+                        } else {
+                            try {
+                                result = toolExecutor.execute(tc);
+                            } catch (Exception e) {
+                                log.error("Tool execution failed: {} - {}", tc.name(), e.getMessage());
+                                result = ToolResult.error(tc.id(),
+                                        "Tool execution error: " + e.getMessage());
+                            }
+                        }
+                        conversation.addMessage(Message.tool(result.toolCallId(), result.content()));
+                    }
+                }
             }
 
-            // 7. If this was the last allowed round, warn
+            // If this was the last allowed round, warn
             if (round == config.maxToolRounds() - 1) {
                 log.warn("Reached maximum tool rounds ({})", config.maxToolRounds());
                 conversation.addMessage(Message.system(
@@ -139,150 +164,53 @@ public class AgentLoop {
         return responseBuilder.toString();
     }
 
-    // --- Response parsing ---
-
     /**
-     * Parses the raw provider response (JSON string) into text content
-     * and tool calls.
-     *
-     * <p>Supports multiple response formats:
-     * <ul>
-     *   <li>OpenAI-style: {@code {"choices":[{"message":{"content":"...","tool_calls":[...]}}]}}</li>
-     *   <li>Anthropic-style: {@code {"content":[{"type":"text","text":"..."}],...}}</li>
-     *   <li>Simplified: {@code {"content":"...","tool_calls":[...]}}</li>
-     * </ul>
+     * Convenience overload without streaming callback.
      */
-    ParsedResponse parseResponse(String rawJson) {
-        try {
-            JsonNode root = json.readTree(rawJson);
-
-            String text = null;
-            List<ToolCall> toolCalls = new ArrayList<>();
-
-            // Try OpenAI format: choices[0].message.content
-            JsonNode choices = root.get("choices");
-            if (choices != null && choices.isArray() && !choices.isEmpty()) {
-                JsonNode message = choices.get(0).get("message");
-                if (message != null) {
-                    // Text content
-                    JsonNode contentNode = message.get("content");
-                    if (contentNode != null && !contentNode.isNull()) {
-                        text = contentNode.asText();
-                    }
-                    // Tool calls
-                    JsonNode tcNode = message.get("tool_calls");
-                    if (tcNode != null && tcNode.isArray()) {
-                        for (JsonNode tc : tcNode) {
-                            parseOpenAIToolCall(tc).ifPresent(toolCalls::add);
-                        }
-                    }
-                }
-            }
-
-            // Try top-level "content" field (string or content-block array)
-            if (text == null) {
-                JsonNode contentNode = root.get("content");
-                if (contentNode != null) {
-                    if (contentNode.isTextual()) {
-                        text = contentNode.asText();
-                    } else if (contentNode.isArray()) {
-                        // Anthropic-style content blocks
-                        var sb = new StringBuilder();
-                        for (JsonNode block : contentNode) {
-                            if ("text".equals(block.path("type").asText())) {
-                                sb.append(block.path("text").asText());
-                            }
-                        }
-                        text = sb.toString();
-                    }
-                }
-            }
-
-            // Try top-level "tool_calls"
-            JsonNode tcNode = root.get("tool_calls");
-            if (tcNode != null && tcNode.isArray()) {
-                for (JsonNode tc : tcNode) {
-                    parseOpenAIToolCall(tc).ifPresent(toolCalls::add);
-                }
-            }
-
-            // Try Anthropic-style "tool_use" in content blocks
-            JsonNode contentArray = root.get("content");
-            if (contentArray != null && contentArray.isArray()) {
-                for (JsonNode block : contentArray) {
-                    if ("tool_use".equals(block.path("type").asText())) {
-                        String id = block.path("id").asText();
-                        String name = block.path("name").asText();
-                        JsonNode input = block.path("input");
-                        Map<String, Object> args = input.isObject()
-                                ? json.convertValue(input, Map.class)
-                                : Map.of();
-                        toolCalls.add(new ToolCall(id, name, args));
-                    }
-                }
-            }
-
-            return new ParsedResponse(text, Collections.unmodifiableList(toolCalls));
-
-        } catch (Exception e) {
-            log.error("Failed to parse provider response: {}", e.getMessage());
-            log.debug("Raw response (first 500 chars): {}",
-                    rawJson.substring(0, Math.min(500, rawJson.length())));
-            // Fallback: treat entire response as text
-            return new ParsedResponse(rawJson, List.of());
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private Optional<ToolCall> parseOpenAIToolCall(JsonNode node) {
-        try {
-            String id = node.path("id").asText();
-            JsonNode function = node.get("function");
-            if (function == null) return Optional.empty();
-            String name = function.path("name").asText();
-            String argsStr = function.path("arguments").asText();
-            Map<String, Object> args;
-            try {
-                args = argsStr != null && !argsStr.isBlank()
-                        ? json.readValue(argsStr, Map.class)
-                        : Map.of();
-            } catch (Exception e) {
-                args = Map.of();
-            }
-            return Optional.of(new ToolCall(id, name, args));
-        } catch (Exception e) {
-            log.warn("Failed to parse tool call node: {}", e.getMessage());
-            return Optional.empty();
-        }
+    public String run(Conversation conversation, ProviderCallback provider,
+                       ToolExecutor toolExecutor) throws AgentLoopException {
+        return run(conversation, provider, toolExecutor, null);
     }
 
     // --- Inner types ---
 
     /**
-     * Parsed result from a provider response.
+     * Typed response from a provider call — no JSON round-trip needed.
      *
-     * @param text      the text content (may be null if only tool calls)
-     * @param toolCalls any tool calls requested in the response
+     * <p>Two variants:
+     * <ul>
+     *   <li>{@link Text} — a final text response with no tool calls</li>
+     *   <li>{@link ToolUse} — text content plus one or more tool invocation requests</li>
+     * </ul>
      */
-    record ParsedResponse(String text, List<ToolCall> toolCalls) {}
+    public sealed interface LoopResponse {
+        /** A plain text response — the agent is finished. */
+        record Text(String content) implements LoopResponse {}
+
+        /** Text content accompanied by tool calls. Text may be empty if purely tool calls. */
+        record ToolUse(String text, java.util.List<ToolCall> toolCalls) implements LoopResponse {}
+    }
 
     /**
      * Callback for sending messages to the model provider.
      *
      * <p>Implementations should serialize the messages into the
-     * provider's API format, make the HTTP request, and return the
-     * raw JSON response body.</p>
+     * provider's API format, make the HTTP request, and return a
+     * typed {@link LoopResponse}. The {@code onToken} callback
+     * receives streaming text tokens as they arrive (may be null
+     * if the caller doesn't need streaming).</p>
      */
     @FunctionalInterface
     public interface ProviderCallback {
         /**
-         * Sends a list of messages to the model and returns the raw response.
+         * Sends a list of messages to the model.
          *
          * @param messages the conversation messages to send
-         * @return the raw JSON response string from the model API
+         * @param onToken  consumer for streaming text tokens (may be {@code null})
+         * @return a typed response with text and/or tool calls
          * @throws Exception on network or API errors
          */
-        String complete(List<Message> messages) throws Exception;
+        LoopResponse complete(List<Message> messages, Consumer<String> onToken) throws Exception;
     }
 
     /**

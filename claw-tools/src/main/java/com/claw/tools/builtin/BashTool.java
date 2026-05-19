@@ -50,6 +50,7 @@ public class BashTool implements Tool {
         }
 
         ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
+        pb.directory(workingDirectory().toFile());
         pb.redirectErrorStream(false);
         Process process = pb.start();
 

@@ -4,6 +4,15 @@
 
 > 📖 学习项目，不是 Claude Code 的替代品。目标是让你理解 Agent 的架构精髓，而不是绕过 Anthropic 的定价。
 
+## ✨ v1.1 更新
+
+- **统一消息模型** — 消除 claw-core ↔ claw-provider 双重类型，ProviderRequest 直接使用核心 Message/ToolCall
+- **流式输出** — AgentLoop 支持 streaming token 回调，REPL 实时渲染
+- **工具扩展** — 新增 `edit`（精准替换）、`web_fetch`（抓取网页）、`find`（文件查找）工具
+- **精确 Token 计数** — 接入 jtokkit (CL100K_BASE)，自动回退到 char/4
+- **权限系统** — PermissionManager 已接入 AgentLoop，支持 NONE/ASK/ALLOW_ALL 三级控制
+- **工作目录穿透** — Tool 接口支持 workingDirectory()，BashTool/文件工具自动遵循
+
 ## 🏗 架构
 
 ```
@@ -27,7 +36,7 @@
 |------|---------|------|
 | **claw-core** | `packages/agent/query.ts` | AgentLoop（核心循环）、QueryEngine（编排层）、Conversation（会话管理） |
 | **claw-provider** | `packages/provider/` | Provider SPI、Anthropic/OpenAI/DeepSeek 实现 |
-| **claw-tools** | `packages/tool-registry/` | Tool 接口、注册表、4 个内置工具（Bash/读文件/写文件/grep） |
+| **claw-tools** | `packages/tool-registry/` | Tool 接口、注册表、7 个内置工具（Bash/读文件/写文件/grep/edit/web_fetch/find） |
 | **claw-cli** | `packages/cli/` + `packages/repl/` | JLine REPL、命令解析、上下文装配 |
 
 ## 🚀 快速开始
@@ -104,9 +113,9 @@ claw> /exit
 ### 文件数量
 
 ```
-claw-core/      12 Java files  (AgentLoop, QueryEngine, Message, Conversation...)
-claw-provider/   7 Java files  (Provider, AnthropicProvider, OpenAI, DeepSeek...)
-claw-tools/      6 Java files  (Tool, ToolRegistry, BashTool, ReadFileTool...)
+claw-core/      14 Java files  (AgentLoop, QueryEngine, Message, Conversation, TokenCounter...)
+claw-provider/   6 Java files  (Provider, AnthropicProvider, OpenAI, DeepSeek...)
+claw-tools/      8 Java files  (Tool, ToolRegistry, BashTool, ReadFileTool, EditTool, WebFetchTool...)
 claw-cli/        3 Java files  (ClawApplication, ClawRepl, ClawContext)
 ```
 
