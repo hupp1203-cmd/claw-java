@@ -1,20 +1,25 @@
 package com.claw.tools.builtin;
 
 import com.claw.tools.Tool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 /**
  * Executes shell commands via ProcessBuilder.
- * Captures stdout and stderr. Timeout after 30 seconds. Output limited to 50KB.
+ * Captures stdout and stderr using virtual threads. Output limited to 50KB.
  */
 public class BashTool implements Tool {
 
+    private static final Logger log = LoggerFactory.getLogger(BashTool.class);
     private static final int MAX_OUTPUT_BYTES = 50 * 1024; // 50KB
     private static final long TIMEOUT_SECONDS = 30;
 
@@ -26,6 +31,11 @@ public class BashTool implements Tool {
     @Override
     public String description() {
         return "Execute a shell command via bash. Returns exit code, stdout, and stderr.";
+    }
+
+    @Override
+    public Duration timeout() {
+        return Duration.ofSeconds(TIMEOUT_SECONDS);
     }
 
     @Override
@@ -49,6 +59,8 @@ public class BashTool implements Tool {
             return "Error: command parameter is required";
         }
 
+        log.debug("Executing: {}", command);
+
         ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
         pb.directory(workingDirectory().toFile());
         pb.redirectErrorStream(false);
@@ -57,37 +69,37 @@ public class BashTool implements Tool {
         StringBuilder stdout = new StringBuilder();
         StringBuilder stderr = new StringBuilder();
 
-        Thread stdoutThread = new Thread(() -> captureStream(process.getInputStream(), stdout, MAX_OUTPUT_BYTES));
-        Thread stderrThread = new Thread(() -> captureStream(process.getErrorStream(), stderr, MAX_OUTPUT_BYTES));
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var stdoutFuture = executor.submit(() -> captureStream(process.getInputStream(), stdout, MAX_OUTPUT_BYTES));
+            var stderrFuture = executor.submit(() -> captureStream(process.getErrorStream(), stderr, MAX_OUTPUT_BYTES));
 
-        stdoutThread.start();
-        stderrThread.start();
+            boolean finished = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                stdoutFuture.cancel(true);
+                stderrFuture.cancel(true);
+                log.warn("Command timed out after {}s: {}", TIMEOUT_SECONDS, command);
+                return "Error: Command timed out after " + TIMEOUT_SECONDS + " seconds";
+            }
 
-        boolean finished = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        if (!finished) {
-            process.destroyForcibly();
-            stdoutThread.interrupt();
-            stderrThread.interrupt();
-            return "Error: Command timed out after " + TIMEOUT_SECONDS + " seconds";
+            stdoutFuture.get(5, TimeUnit.SECONDS);
+            stderrFuture.get(5, TimeUnit.SECONDS);
         }
-
-        stdoutThread.join(5000);
-        stderrThread.join(5000);
 
         int exitCode = process.exitValue();
-        StringBuilder result = new StringBuilder();
+        var result = new StringBuilder();
         result.append("Exit code: ").append(exitCode).append("\n");
-        if (stdout.length() > 0) {
+        if (!stdout.isEmpty()) {
             result.append("stdout:\n").append(stdout);
         }
-        if (stderr.length() > 0) {
+        if (!stderr.isEmpty()) {
             result.append("stderr:\n").append(stderr);
         }
         return result.toString();
     }
 
-    private void captureStream(java.io.InputStream stream, StringBuilder sb, int maxBytes) {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream))) {
+    private static void captureStream(java.io.InputStream stream, StringBuilder sb, int maxBytes) {
+        try (var reader = new BufferedReader(new InputStreamReader(stream))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (sb.length() + line.length() + 1 <= maxBytes) {
@@ -98,7 +110,7 @@ public class BashTool implements Tool {
                 }
             }
         } catch (IOException e) {
-            // Stream closed or interrupted
+            log.debug("Stream closed or interrupted: {}", e.toString());
         }
     }
 }

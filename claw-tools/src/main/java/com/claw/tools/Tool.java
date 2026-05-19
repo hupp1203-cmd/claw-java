@@ -1,6 +1,7 @@
 package com.claw.tools;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Map;
 
 /**
@@ -32,5 +33,13 @@ public interface Tool {
      */
     default Path workingDirectory() {
         return Path.of(System.getProperty("user.dir"));
+    }
+
+    /**
+     * Returns the maximum duration this tool is allowed to run.
+     * Defaults to 30 seconds. Override for long-running tools.
+     */
+    default Duration timeout() {
+        return Duration.ofSeconds(30);
     }
 }

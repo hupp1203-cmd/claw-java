@@ -140,6 +140,18 @@ public final class AnthropicProvider implements Provider {
 
             @Override
             public void onClosed(EventSource eventSource) {
+                deliverResult();
+                future.complete(null);
+            }
+
+            @Override
+            public void onFailure(EventSource es, Throwable t, okhttp3.Response resp) {
+                log.error("SSE stream failure", t);
+                deliverResult();
+                future.completeExceptionally(t != null ? t : new IOException("SSE stream failed"));
+            }
+
+            private void deliverResult() {
                 ProviderResponse result;
                 if (!completedToolCalls.isEmpty()) {
                     result = new ProviderResponse.ToolCallResponse(
@@ -148,23 +160,22 @@ public final class AnthropicProvider implements Provider {
                     result = new ProviderResponse.TextResponse(textBuf.toString());
                 }
                 if (onComplete != null) onComplete.accept(result);
-                future.complete(null);
-            }
-
-            @Override
-            public void onFailure(EventSource es, Throwable t, okhttp3.Response resp) {
-                log.error("SSE stream failure", t);
-                if (onComplete != null) {
-                    onComplete.accept(new ProviderResponse.TextResponse(textBuf.toString()));
-                }
-                future.completeExceptionally(t != null ? t : new IOException("SSE stream failed"));
             }
         });
 
         try {
-            future.get(); // block until stream completes
-        } catch (Exception e) {
+            future.get(httpClient.callTimeoutMillis(), TimeUnit.MILLISECONDS);
+        } catch (java.util.concurrent.TimeoutException e) {
+            eventSource.cancel();
+            log.warn("SSE stream timed out after {}ms", httpClient.callTimeoutMillis());
+            throw new IOException("Streaming timed out", e);
+        } catch (InterruptedException e) {
+            eventSource.cancel();
+            Thread.currentThread().interrupt();
             throw new IOException("Streaming interrupted", e);
+        } catch (Exception e) {
+            eventSource.cancel();
+            throw new IOException("Streaming failed", e);
         }
     }
 
@@ -267,8 +278,11 @@ public final class AnthropicProvider implements Provider {
     private IOException apiError(Response response) {
         String body = "";
         try {
-            if (response.body() != null) body = response.body().string();
-        } catch (Exception ignored) {}
+            var respBody = response.body();
+            if (respBody != null) body = respBody.string();
+        } catch (Exception e) {
+            log.debug("Failed to read error response body: {}", e.toString());
+        }
         return new IOException("Anthropic API error " + response.code() + ": " + body);
     }
 
