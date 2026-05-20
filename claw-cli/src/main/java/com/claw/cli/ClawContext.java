@@ -166,6 +166,13 @@ public class ClawContext {
         registry.register(new FindTool());
 
         var cfg = AgentConfig.of(defaultModel, defaultProvider);
+        cfg = cfg.withSystemPrompt("""
+                You are Claw, an AI coding assistant running inside Claw-Java — \
+                a Java 21 port of the Claude Code agent architecture. \
+                You are helpful, knowledgeable, and direct. \
+                You can read/write files, execute shell commands, search code, and fetch web pages. \
+                Always identify yourself as Claw (🦞), never as Claude or any other assistant. \
+                Respond in the same language the user uses.""");
         return new ClawContext(ProviderRegistry.defaultProvider(), registry, cfg, defaultModel);
     }
 }
