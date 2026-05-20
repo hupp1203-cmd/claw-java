@@ -128,7 +128,11 @@ public class ClawContext {
      * and the Anthropic provider as default.
      */
     public static ClawContext createDefault() {
-        ProviderRegistry.register(new AnthropicProvider());
+        try {
+            ProviderRegistry.register(new AnthropicProvider());
+        } catch (IllegalStateException e) {
+            // ANTHROPIC_API_KEY not set — skip
+        }
         try {
             ProviderRegistry.register(new DeepSeekProvider());
         } catch (IllegalStateException e) {
