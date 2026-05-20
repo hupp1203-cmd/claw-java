@@ -117,7 +117,8 @@ public class AgentLoop {
                     }
 
                     if (toolCalls.isEmpty()) {
-                        // Edge case: text-only but wrapped in ToolUse
+                        // Edge case: text-only but wrapped in ToolUse — provider anomaly
+                        log.warn("Provider returned ToolUse with empty toolCalls — treating as final answer");
                         conversation.addMessage(Message.assistant(text != null ? text : ""));
                         return responseBuilder.toString();
                     }
@@ -148,16 +149,37 @@ public class AgentLoop {
                                         "Tool execution error: " + e.getMessage());
                             }
                         }
-                        conversation.addMessage(Message.tool(result.toolCallId(), result.content()));
+                        conversation.addMessage(Message.tool(result.toolCallId(),
+                                (result.isError() ? "[ERROR] " : "") + result.content()));
                     }
                 }
             }
 
-            // If this was the last allowed round, warn
+            // If this was the last allowed round, give the model one more chance
             if (round == config.maxToolRounds() - 1) {
                 log.warn("Reached maximum tool rounds ({})", config.maxToolRounds());
                 conversation.addMessage(Message.system(
                         "Maximum tool rounds reached. Provide your final answer now."));
+
+                // Call provider one more time so the model can respond to the system message
+                try {
+                    List<Message> finalMessages = conversation.buildModelMessages();
+                    LoopResponse finalResponse = provider.complete(finalMessages, onToken);
+                    if (finalResponse instanceof LoopResponse.Text(var text)) {
+                        responseBuilder.append(text);
+                        conversation.addMessage(Message.assistant(text));
+                    } else if (finalResponse instanceof LoopResponse.ToolUse(var text, var toolCalls)) {
+                        if (!toolCalls.isEmpty()) {
+                            log.warn("Model still requesting tools after max rounds, returning partial result");
+                        }
+                        if (text != null && !text.isBlank()) {
+                            responseBuilder.append(text);
+                        }
+                    }
+                } catch (Exception e) {
+                    log.error("Failed to get final answer after max rounds: {}", e.getMessage());
+                }
+            return responseBuilder.toString();
             }
         }
 

@@ -82,8 +82,18 @@ public class BashTool implements Tool {
                 return "Error: Command timed out after " + TIMEOUT_SECONDS + " seconds";
             }
 
-            stdoutFuture.get(5, TimeUnit.SECONDS);
-            stderrFuture.get(5, TimeUnit.SECONDS);
+            try {
+                stdoutFuture.get(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw e;
+            }
+            try {
+                stderrFuture.get(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw e;
+            }
         }
 
         int exitCode = process.exitValue();

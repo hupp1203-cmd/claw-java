@@ -1,6 +1,8 @@
 package com.claw.tools.builtin;
 
 import com.claw.tools.Tool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.BufferedInputStream;
 import java.io.IOException;
@@ -21,6 +23,7 @@ import java.util.stream.Stream;
  */
 public class GrepTool implements Tool {
 
+    private static final Logger log = LoggerFactory.getLogger(GrepTool.class);
     private static final int MAX_MATCHES = 200;
     private static final int MAX_DEPTH = 20;
 
@@ -126,8 +129,8 @@ public class GrepTool implements Tool {
                     matchCount[0]++;
                 }
             }
-        } catch (IOException ignored) {
-            // Permission denied, binary file, etc.
+        } catch (IOException e) {
+            log.debug("Skipping file {}: {}", file.getFileName(), e.toString());
         }
     }
 

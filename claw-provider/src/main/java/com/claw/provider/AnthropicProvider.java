@@ -134,7 +134,7 @@ public final class AnthropicProvider implements Provider {
                         }
                     }
                 } catch (Exception e) {
-                    log.warn("Failed to parse SSE event: {}", e.getMessage());
+                    log.warn("Failed to parse SSE event (type={}): {}", type, e.getMessage(), e);
                 }
             }
 

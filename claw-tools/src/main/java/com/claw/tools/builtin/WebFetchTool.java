@@ -83,6 +83,10 @@ public class WebFetchTool implements Tool {
             return "Error: Invalid URL: " + urlStr;
         }
 
+        if (isPrivateAddress(uri.getHost())) {
+            return "Error: Access to private/internal addresses is not allowed: " + uri.getHost();
+        }
+
         if (!"http".equals(uri.getScheme()) && !"https".equals(uri.getScheme())) {
             return "Error: Only HTTP and HTTPS URLs are supported";
         }
@@ -124,5 +128,19 @@ public class WebFetchTool implements Tool {
         }
 
         return text;
+    }
+
+    /**
+     * Check if a hostname resolves to a private/internal IP address.
+     */
+    private static boolean isPrivateAddress(String host) {
+        try {
+            java.net.InetAddress addr = java.net.InetAddress.getByName(host);
+            return addr.isLoopbackAddress()
+                    || addr.isLinkLocalAddress()
+                    || addr.isSiteLocalAddress();
+        } catch (Exception e) {
+            return true; // block if can't resolve
+        }
     }
 }

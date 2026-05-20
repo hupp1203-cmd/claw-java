@@ -144,10 +144,12 @@ public class ClawContext {
             // OPENAI_API_KEY not set — skip
         }
 
-        // Pick first available provider
-        String defaultProvider = ProviderRegistry.listAll().isEmpty()
-                ? "anthropic"
-                : ProviderRegistry.listAll().getFirst();
+        // Fail fast if no provider could be registered
+        if (ProviderRegistry.listAll().isEmpty()) {
+            throw new IllegalStateException(
+                    "No provider available. Set at least one of: ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, OPENAI_API_KEY");
+        }
+        String defaultProvider = ProviderRegistry.listAll().getFirst();
         String defaultModel = switch (defaultProvider) {
             case "deepseek" -> "deepseek-chat";
             case "openai" -> "gpt-4o";

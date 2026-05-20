@@ -125,7 +125,7 @@ public abstract class OpenAiCompatibleProvider implements Provider {
                         es.cancel();
                     }
                 } catch (Exception e) {
-                    log.warn("Failed to parse SSE event: {}", e.getMessage());
+                    log.warn("Failed to parse SSE event: {}", e.getMessage(), e);
                 }
             }
 
@@ -168,7 +168,9 @@ public abstract class OpenAiCompatibleProvider implements Provider {
         });
 
         try {
-            future.get();
+            future.get(httpClient.callTimeoutMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (java.util.concurrent.TimeoutException e) {
+            throw new java.io.IOException("Streaming timed out", e);
         } catch (Exception e) {
             throw new IOException("Streaming interrupted", e);
         }
@@ -254,7 +256,9 @@ public abstract class OpenAiCompatibleProvider implements Provider {
         String body = "";
         try {
             if (response.body() != null) body = response.body().string();
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            log.debug("Failed to read error response body: {}", e.toString());
+        }
         return new IOException(name() + " API error " + response.code() + ": " + body);
     }
 

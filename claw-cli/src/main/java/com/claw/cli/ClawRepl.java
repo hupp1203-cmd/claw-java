@@ -67,6 +67,7 @@ public class ClawRepl {
                     // EOF
                     terminal.writer().println("Goodbye!");
                     terminal.flush();
+                    try { terminal.close(); } catch (java.io.IOException ignored) {}
                     return;
                 }
 
@@ -83,6 +84,7 @@ public class ClawRepl {
 
                 // Process command or chat
                 if (handleCommand(line, terminal)) {
+                    try { terminal.close(); } catch (java.io.IOException ignored) {}
                     return; // exit
                 }
 
@@ -92,6 +94,7 @@ public class ClawRepl {
             } catch (EndOfFileException e) {
                 terminal.writer().println("Goodbye!");
                 terminal.flush();
+                try { terminal.close(); } catch (java.io.IOException ignored) {}
                 return;
             }
         }
