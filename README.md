@@ -72,31 +72,56 @@ claw> /exit
 
 ## 🧠 核心架构图
 
+```mermaid
+flowchart TD
+    U[👤 用户输入] --> REPL[ClawRepl<br/>JLine 终端]
+    REPL --> QE[QueryEngine.chat<br/>编排层]
+    QE --> AL{AgentLoop.run<br/>★ 核心循环}
+
+    AL -->|每轮| BM[buildMessages<br/>构建消息列表]
+    BM --> PC[Provider.complete<br/>调用 LLM API]
+    PC --> PR[parseResponse<br/>解析响应]
+
+    PR -->|文本| ST[streaming token<br/>实时输出到终端]
+    ST --> DONE[✅ 返回结果]
+
+    PR -->|tool_call| TC{tool_call?}
+    TC -->|Yes| EXEC[ToolRegistry.execute<br/>执行工具]
+    EXEC --> AR[append result<br/>追加到对话]
+    AR --> AL
+
+    AL -->|超 25 轮| LIMIT[⚠️ 达到上限<br/>强制返回]
+
+    subgraph Tools[🔧 内置工具]
+        Bash[bash]
+        Read[read_file]
+        Write[write_file]
+        Edit[edit]
+        Grep[grep]
+        Find[find]
+        Fetch[web_fetch]
+    end
+
+    EXEC --> Tools
+
+    subgraph Providers[🤖 LLM Provider]
+        Anthro[Anthropic]
+        DS[DeepSeek]
+        OAI[OpenAI]
+    end
+
+    PC --> Providers
+
+    subgraph Session[💾 会话管理]
+        Conv[Conversation<br/>消息存储]
+        Comp[compact<br/>压缩]
+        Persist[SessionStore<br/>持久化]
+    end
+
+    QE --> Session
 ```
-用户输入 → ClawRepl → QueryEngine.chat()
-                         │
-                    ┌────▼────┐
-                    │AgentLoop│  ← ★ 核心：对标 query.ts
-                    │.run()   │
-                    └────┬────┘
-                         │
-            ┌────────────┼────────────┐
-            ▼            ▼            ▼
-     buildMessages  Provider.complete  parseResponse
-     (系统提示词)    (API调用)         (解析JSON)
-                         │
-                    ┌────▼────┐
-                    │tool_call?│
-                    └────┬────┘
-                    Yes   │   No → 返回文本
-                    ┌────▼────┐
-                    │execute  │
-                    │tool     │
-                    └────┬────┘
-                         │
-                    append result
-                    → loop back (max 25 rounds)
-```
+
+> 上图是 Agent 主循环的完整流程 — 对标 Claude Code 的 `query.ts` 架构。
 
 ## 📁 关键源码导览
 
