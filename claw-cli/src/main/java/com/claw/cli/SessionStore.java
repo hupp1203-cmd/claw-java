@@ -77,10 +77,24 @@ final class SessionStore {
         return result;
     }
 
-    /** Load a saved conversation by session ID. Returns null if not found. */
+    /** Load a saved conversation by session ID (exact or prefix match). */
     static Conversation load(String sessionId) {
         Path file = SESSIONS_DIR.resolve(sessionId + ".json");
-        if (!Files.exists(file)) return null;
+        if (!Files.exists(file)) {
+            // Try prefix match for short IDs
+            try {
+                Files.createDirectories(SESSIONS_DIR);
+                try (var files = Files.list(SESSIONS_DIR)) {
+                    var match = files
+                            .filter(p -> p.getFileName().toString().startsWith(sessionId))
+                            .findFirst();
+                    file = match.orElse(null);
+                }
+            } catch (IOException e) {
+                return null;
+            }
+        }
+        if (file == null || !Files.exists(file)) return null;
         try {
             var node = MAPPER.readTree(file.toFile());
             var msgs = new ArrayList<Message>();
