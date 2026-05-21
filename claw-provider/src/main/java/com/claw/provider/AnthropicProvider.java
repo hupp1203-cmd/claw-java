@@ -83,6 +83,8 @@ public final class AnthropicProvider implements Provider {
         var httpRequest = buildRequest(pr, true);
         var future = new CompletableFuture<Void>();
 
+        var done = new java.util.concurrent.atomic.AtomicBoolean(false);
+
         EventSource.Factory factory = EventSources.createFactory(httpClient);
         EventSource eventSource = factory.newEventSource(httpRequest, new EventSourceListener() {
 
@@ -140,15 +142,23 @@ public final class AnthropicProvider implements Provider {
 
             @Override
             public void onClosed(EventSource eventSource) {
-                deliverResult();
-                future.complete(null);
+                if (done.compareAndSet(false, true)) {
+                    deliverResult();
+                }
+                if (!future.isDone()) {
+                    future.complete(null);
+                }
             }
 
             @Override
             public void onFailure(EventSource es, Throwable t, okhttp3.Response resp) {
-                log.error("SSE stream failure", t);
-                deliverResult();
-                future.completeExceptionally(t != null ? t : new IOException("SSE stream failed"));
+                if (done.compareAndSet(false, true)) {
+                    log.error("SSE stream failure", t);
+                    deliverResult();
+                }
+                if (!future.isDone()) {
+                    future.completeExceptionally(t != null ? t : new IOException("SSE stream failed"));
+                }
             }
 
             private void deliverResult() {

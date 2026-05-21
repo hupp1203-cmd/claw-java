@@ -74,7 +74,16 @@ public class ClawContext {
                 // Use streaming if onToken is provided
                 if (onToken != null) {
                     var result = new java.util.concurrent.atomic.AtomicReference<ProviderResponse>();
-                    provider.completeStreaming(req, onToken, result::set);
+                    try {
+                        provider.completeStreaming(req, onToken, result::set);
+                    } catch (IOException e) {
+                        // Fall back to non-streaming on streaming failure
+                        ProviderResponse resp = provider.complete(req);
+                        if (resp instanceof ProviderResponse.TextResponse t) {
+                            onToken.accept(t.content());
+                        }
+                        return toLoopResponse(resp);
+                    }
                     ProviderResponse resp = result.get();
                     return toLoopResponse(resp);
                 } else {

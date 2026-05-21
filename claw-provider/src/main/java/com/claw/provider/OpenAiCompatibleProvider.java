@@ -81,16 +81,17 @@ public abstract class OpenAiCompatibleProvider implements Provider {
 
         var httpRequest = buildRequest(pr, true);
         var future = new CompletableFuture<Void>();
+        var done = new java.util.concurrent.atomic.AtomicBoolean(false);
 
         EventSource.Factory factory = EventSources.createFactory(httpClient);
-        factory.newEventSource(httpRequest, new EventSourceListener() {
+        EventSource eventSource = factory.newEventSource(httpRequest, new EventSourceListener() {
 
             private final StringBuilder textBuf = new StringBuilder();
             private final Map<Integer, ToolCallDelta> toolCallDeltas = new java.util.HashMap<>();
 
             @Override
             public void onEvent(EventSource es, String id, String type, String data) {
-                if (data == null || "[DONE]".equals(data.trim())) return;
+                if (done.get() || data == null || "[DONE]".equals(data.trim())) return;
                 try {
                     JsonNode root = MAPPER.readTree(data);
                     JsonNode choices = root.get("choices");
@@ -118,12 +119,8 @@ public abstract class OpenAiCompatibleProvider implements Provider {
                         }
                     }
 
-                    String finishReason = choices.get(0).has("finish_reason")
-                            ? choices.get(0).get("finish_reason").asText() : null;
-
-                    if ("stop".equals(finishReason) || "tool_calls".equals(finishReason)) {
-                        es.cancel();
-                    }
+                    // Note: don't cancel or set done flag here — let onClosed
+                    // deliver the result naturally when the server closes the stream
                 } catch (Exception e) {
                     log.warn("Failed to parse SSE event: {}", e.getMessage(), e);
                 }
@@ -131,15 +128,23 @@ public abstract class OpenAiCompatibleProvider implements Provider {
 
             @Override
             public void onClosed(EventSource eventSource) {
-                deliverResult();
-                future.complete(null);
+                if (done.compareAndSet(false, true)) {
+                    deliverResult();
+                }
+                if (!future.isDone()) {
+                    future.complete(null);
+                }
             }
 
             @Override
             public void onFailure(EventSource es, Throwable t, okhttp3.Response resp) {
-                log.error("SSE stream failure", t);
-                deliverResult();
-                future.completeExceptionally(t != null ? t : new IOException("SSE stream failed"));
+                if (done.compareAndSet(false, true)) {
+                    log.error("SSE stream failure", t);
+                    deliverResult();
+                }
+                if (!future.isDone()) {
+                    future.completeExceptionally(t != null ? t : new IOException("SSE stream failed"));
+                }
             }
 
             private void deliverResult() {
