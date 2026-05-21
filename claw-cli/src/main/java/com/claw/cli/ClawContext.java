@@ -162,12 +162,11 @@ public class ClawContext {
         // Fail fast if no provider could be registered
         if (ProviderRegistry.listAll().isEmpty()) {
             throw new IllegalStateException("""
-                    No provider available. Set an API key in one of:
-                      - Environment variable: DEEPSEEK_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY
-                      - ./.claw-java/config (project-level)
-                      - ~/.claw-java/config (user-level)
-                    Config file format:
-                      DEEPSEEK_API_KEY=sk-...""");
+                    No API key found. Set one in:
+                      ~/.claw-java/config
+                    Format:
+                      DEEPSEEK_API_KEY=sk-...
+                    A template has been created for you — edit it and restart.""");
         }
         String defaultProvider = ProviderRegistry.listAll().getFirst();
         String defaultModel = switch (defaultProvider) {
