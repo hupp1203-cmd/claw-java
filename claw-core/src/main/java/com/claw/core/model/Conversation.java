@@ -189,8 +189,22 @@ public class Conversation {
         if (messages.size() <= keepRecent + 2) {
             return; // nothing to compact
         }
+
+        // Find a safe cut point — must land on a USER message so we
+        // don't orphan TOOL results that reference removed tool calls.
+        int cutPoint = messages.size() - keepRecent;
+        while (cutPoint < messages.size() && messages.get(cutPoint).role() != Message.Role.USER) {
+            cutPoint++;
+        }
+        // Skip any orphan TOOL messages right after the user boundary
+        while (cutPoint < messages.size() && messages.get(cutPoint).role() == Message.Role.TOOL) {
+            cutPoint++;
+        }
+
+        if (cutPoint >= messages.size() - 1) return; // can't compact safely
+
         int removeStart = 1; // keep the first message
-        int removeEnd = messages.size() - keepRecent;
+        int removeEnd = cutPoint;
 
         if (removeEnd <= removeStart) return;
 
@@ -204,7 +218,7 @@ public class Conversation {
 
         totalCharsDirty = true;
         log.info("Compacted conversation: removed {} messages, kept {} recent, total now {}",
-                removed.size(), keepRecent, messages.size());
+                removed.size(), messages.size() - removeStart, messages.size());
     }
 
     /** Convenience overload keeping 6 recent messages. */
