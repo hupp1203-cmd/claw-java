@@ -135,7 +135,9 @@ claw-cli/        3 Java files  (ClawApplication, ClawRepl, ClawContext)
 
 飞机大战游戏由 Claw-Java 自主升级：[hupp1203-cmd.github.io/plane-war](https://hupp1203-cmd.github.io/plane-war/)
 
-> 升级内容：WASD 键盘控制、3条命系统、localStorage 最高分 — 全部由 Claw-Java 自主完成。
+> **v2 — 手机端适配**：触摸滑动控制、全屏自适应、暂停/继续、退出按钮、刘海屏适配
+>
+> v1 升级内容：WASD 键盘控制、3条命系统、localStorage 最高分 — 全部由 Claw-Java 自主完成。
 
 ## ⚠️ 免责声明
 
