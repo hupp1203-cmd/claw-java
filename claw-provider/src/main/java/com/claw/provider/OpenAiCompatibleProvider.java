@@ -46,7 +46,14 @@ public abstract class OpenAiCompatibleProvider implements Provider {
     private final String apiKey;
 
     protected OpenAiCompatibleProvider() {
-        this.apiKey = requireEnv(envVarName());
+        this(null);
+    }
+
+    /** @param explicitApiKey if non-null, use this key; otherwise read from env var  */
+    protected OpenAiCompatibleProvider(String explicitApiKey) {
+        this.apiKey = explicitApiKey != null && !explicitApiKey.isBlank()
+                ? explicitApiKey
+                : requireEnv(envVarName());
         this.httpClient = new OkHttpClient.Builder()
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(Duration.ofSeconds(120))

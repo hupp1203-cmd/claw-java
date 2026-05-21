@@ -49,7 +49,14 @@ public final class AnthropicProvider implements Provider {
     private final String apiKey;
 
     public AnthropicProvider() {
-        this.apiKey = requireEnv("ANTHROPIC_API_KEY");
+        this(null);
+    }
+
+    /** @param explicitApiKey if non-null, use this key; otherwise read from env var  */
+    public AnthropicProvider(String explicitApiKey) {
+        this.apiKey = explicitApiKey != null && !explicitApiKey.isBlank()
+                ? explicitApiKey
+                : requireEnv("ANTHROPIC_API_KEY");
         this.httpClient = new OkHttpClient.Builder()
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(Duration.ofSeconds(120))

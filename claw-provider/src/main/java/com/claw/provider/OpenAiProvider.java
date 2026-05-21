@@ -5,10 +5,18 @@ import java.util.List;
 /**
  * OpenAI Chat Completions API provider.
  *
- * <p>Uses {@code OPENAI_API_KEY} from the environment and calls
- * {@code POST https://api.openai.com/v1/chat/completions}.
+ * <p>Uses {@code OPENAI_API_KEY} from the environment or {@code .claw-java/config}.
  */
 public final class OpenAiProvider extends OpenAiCompatibleProvider {
+
+    public OpenAiProvider() {
+        super();
+    }
+
+    /** @param apiKey explicit API key; reads from env/.claw-java if null */
+    public OpenAiProvider(String apiKey) {
+        super(apiKey);
+    }
 
     @Override
     public String name() {

@@ -135,28 +135,39 @@ public class ClawContext {
     /**
      * Creates a default context with all built-in tools registered
      * and the Anthropic provider as default.
+     *
+     * <p>API keys are resolved from: env var → {@code ./.claw-java/config} →
+     * {@code ~/.claw-java/config}.</p>
      */
     public static ClawContext createDefault() {
         try {
-            ProviderRegistry.register(new AnthropicProvider());
+            var key = com.claw.core.ClawConfig.get("ANTHROPIC_API_KEY");
+            ProviderRegistry.register(new AnthropicProvider(key));
         } catch (IllegalStateException e) {
             // ANTHROPIC_API_KEY not set — skip
         }
         try {
-            ProviderRegistry.register(new DeepSeekProvider());
+            var key = com.claw.core.ClawConfig.get("DEEPSEEK_API_KEY");
+            ProviderRegistry.register(new DeepSeekProvider(key));
         } catch (IllegalStateException e) {
             // DEEPSEEK_API_KEY not set — skip
         }
         try {
-            ProviderRegistry.register(new OpenAiProvider());
+            var key = com.claw.core.ClawConfig.get("OPENAI_API_KEY");
+            ProviderRegistry.register(new OpenAiProvider(key));
         } catch (IllegalStateException e) {
             // OPENAI_API_KEY not set — skip
         }
 
         // Fail fast if no provider could be registered
         if (ProviderRegistry.listAll().isEmpty()) {
-            throw new IllegalStateException(
-                    "No provider available. Set at least one of: ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, OPENAI_API_KEY");
+            throw new IllegalStateException("""
+                    No provider available. Set an API key in one of:
+                      - Environment variable: DEEPSEEK_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY
+                      - ./.claw-java/config (project-level)
+                      - ~/.claw-java/config (user-level)
+                    Config file format:
+                      DEEPSEEK_API_KEY=sk-...""");
         }
         String defaultProvider = ProviderRegistry.listAll().getFirst();
         String defaultModel = switch (defaultProvider) {

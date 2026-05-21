@@ -5,10 +5,18 @@ import java.util.List;
 /**
  * DeepSeek API provider (OpenAI-compatible).
  *
- * <p>Uses {@code DEEPSEEK_API_KEY} from the environment and calls
- * {@code POST https://api.deepseek.com/v1/chat/completions}.
+ * <p>Uses {@code DEEPSEEK_API_KEY} from the environment or {@code .claw-java/config}.
  */
 public final class DeepSeekProvider extends OpenAiCompatibleProvider {
+
+    public DeepSeekProvider() {
+        super();
+    }
+
+    /** @param apiKey explicit API key; reads from env/.claw-java if null */
+    public DeepSeekProvider(String apiKey) {
+        super(apiKey);
+    }
 
     @Override
     public String name() {
