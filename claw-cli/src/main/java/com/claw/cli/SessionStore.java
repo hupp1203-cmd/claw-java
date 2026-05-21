@@ -61,6 +61,7 @@ final class SessionStore {
                         .forEach(p -> {
                             try {
                                 var node = MAPPER.readTree(p.toFile());
+                                if (!node.has("sessionId")) return;
                                 var id = node.get("sessionId").asText();
                                 var model = node.has("model") ? node.get("model").asText() : "?";
                                 var time = node.has("savedAt")
