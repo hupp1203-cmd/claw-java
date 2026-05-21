@@ -151,13 +151,7 @@ public abstract class OpenAiCompatibleProvider implements Provider {
                 if (!toolCallDeltas.isEmpty()) {
                     List<ToolCall> calls = new ArrayList<>();
                     for (ToolCallDelta tcd : toolCallDeltas.values()) {
-                        Map<String, Object> args;
-                        try {
-                            args = MAPPER.readValue(tcd.arguments.toString(), new TypeReference<>() {});
-                        } catch (Exception e) {
-                            log.warn("Failed to parse tool call arguments: {}", e.getMessage());
-                            args = Collections.emptyMap();
-                        }
+                        Map<String, Object> args = parseArgs(tcd.arguments.toString());
                         calls.add(new ToolCall(tcd.id, tcd.name, args));
                     }
                     if (onComplete != null) {
@@ -169,6 +163,52 @@ public abstract class OpenAiCompatibleProvider implements Provider {
                         onComplete.accept(new ProviderResponse.TextResponse(textBuf.toString()));
                     }
                 }
+            }
+
+            /** Parse tool call arguments, falling back to repair heuristics on truncation. */
+            private Map<String, Object> parseArgs(String raw) {
+                try {
+                    return MAPPER.readValue(raw, new TypeReference<>() {});
+                } catch (Exception e) {
+                    // Try to repair truncated JSON by closing unclosed strings/objects
+                    String repaired = repairTruncatedJson(raw);
+                    if (repaired != null) {
+                        try {
+                            return MAPPER.readValue(repaired, new TypeReference<>() {});
+                        } catch (Exception e2) {
+                            // repair didn't work, fall through
+                        }
+                    }
+                    log.warn("Failed to parse tool call arguments (len={}): {}", raw.length(), e.getMessage());
+                    // Return raw content so the tool can still use it
+                    return Map.of("_parse_error", "Arguments JSON was truncated at " + raw.length()
+                            + " chars. Raw: " + raw.substring(Math.max(0, raw.length() - 200)));
+                }
+            }
+
+            /** Attempt to close an unclosed JSON string and object. Returns null if unrecoverable. */
+            private String repairTruncatedJson(String raw) {
+                if (raw == null || raw.isEmpty()) return null;
+                // Count opening/closing braces and quotes to determine what's missing
+                int braceDepth = 0;
+                boolean inString = false;
+                for (int i = 0; i < raw.length(); i++) {
+                    char c = raw.charAt(i);
+                    if (c == '\\' && inString && i + 1 < raw.length()) {
+                        i++; // skip escaped char
+                        continue;
+                    }
+                    if (c == '"') inString = !inString;
+                    else if (!inString && c == '{') braceDepth++;
+                    else if (!inString && c == '}') braceDepth--;
+                }
+                StringBuilder sb = new StringBuilder(raw);
+                if (inString) sb.append('"');
+                while (braceDepth > 0) {
+                    sb.append('}');
+                    braceDepth--;
+                }
+                return sb.length() > raw.length() ? sb.toString() : null;
             }
         });
 

@@ -325,13 +325,54 @@ public final class AnthropicProvider implements Provider {
             Map<String, Object> args = Map.of();
             String argsStr = arguments.toString();
             if (!argsStr.isBlank()) {
-                try {
-                    args = MAPPER.readValue(argsStr, Map.class);
-                } catch (Exception e) {
-                    log.warn("Failed to parse tool call arguments: {}", argsStr);
-                }
+                args = parseToolArgs(argsStr);
             }
             return new ToolCall(id, name, args);
         }
+    }
+
+    /** Parse tool call arguments, falling back to repair heuristics on truncation. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> parseToolArgs(String raw) {
+        try {
+            return MAPPER.readValue(raw, Map.class);
+        } catch (Exception e) {
+            // Try to repair truncated JSON
+            String repaired = repairTruncatedJson(raw);
+            if (repaired != null) {
+                try {
+                    return MAPPER.readValue(repaired, Map.class);
+                } catch (Exception e2) {
+                    // repair didn't work, fall through
+                }
+            }
+            log.warn("Failed to parse tool call arguments (len={}): {}", raw.length(), e.getMessage());
+            return Map.of("_parse_error", "Arguments JSON was truncated at " + raw.length()
+                    + " chars. Raw: " + raw.substring(Math.max(0, raw.length() - 200)));
+        }
+    }
+
+    /** Attempt to close an unclosed JSON string and object. Returns null if unrecoverable. */
+    private static String repairTruncatedJson(String raw) {
+        if (raw == null || raw.isEmpty()) return null;
+        int braceDepth = 0;
+        boolean inString = false;
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if (c == '\\' && inString && i + 1 < raw.length()) {
+                i++;
+                continue;
+            }
+            if (c == '"') inString = !inString;
+            else if (!inString && c == '{') braceDepth++;
+            else if (!inString && c == '}') braceDepth--;
+        }
+        StringBuilder sb = new StringBuilder(raw);
+        if (inString) sb.append('"');
+        while (braceDepth > 0) {
+            sb.append('}');
+            braceDepth--;
+        }
+        return sb.length() > raw.length() ? sb.toString() : null;
     }
 }
