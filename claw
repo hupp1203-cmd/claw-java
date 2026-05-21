@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -e
+
+# claw — Claw-Java CLI launcher
+# Put this script anywhere in your PATH, or:
+#   sudo ln -s "$PWD/claw" /usr/local/bin/claw
+
+# Find the jar relative to this script (follow symlinks)
+if command -v realpath &>/dev/null; then
+    SCRIPT_DIR="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
+elif command -v readlink &>/dev/null && readlink -f "$0" &>/dev/null 2>&1; then
+    SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+else
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+fi
+JAR=$(ls "$SCRIPT_DIR/claw-cli/target/claw-cli-"*-SNAPSHOT.jar 2>/dev/null | head -1)
+
+# If not found next to the script, check ~/.claw-java
+if [ -z "$JAR" ] || [ ! -f "$JAR" ]; then
+    JAR=$(ls "$HOME/.claw-java/claw-cli-"*.jar 2>/dev/null | sort -V | tail -1)
+fi
+
+if [ -z "$JAR" ] || [ ! -f "$JAR" ]; then
+    echo "claw: jar not found. Build with:  cd claw-java && mvn install -q -DskipTests"
+    echo "Or copy the jar to ~/.claw-java/claw-cli-<version>.jar"
+    exit 1
+fi
+
+# Allow overriding workdir via -d or --workdir
+WORKDIR=""
+ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -d|--workdir)
+            WORKDIR="$2"; shift 2 ;;
+        -d=*|--workdir=*)
+            WORKDIR="${1#*=}"; shift ;;
+        *)
+            ARGS+=("$1"); shift ;;
+    esac
+done
+
+JAVA_OPTS="${JAVA_OPTS:--Xmx512m}"
+if [ -n "$WORKDIR" ]; then
+    JAVA_OPTS="$JAVA_OPTS -Dclaw.workdir=$WORKDIR"
+fi
+
+exec java $JAVA_OPTS -jar "$JAR" "${ARGS[@]}"
