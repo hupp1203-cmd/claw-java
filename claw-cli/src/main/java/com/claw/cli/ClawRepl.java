@@ -17,8 +17,9 @@ import java.io.IOException;
  * <ul>
  *   <li>Multi-turn conversation with the agent</li>
  *   <li>Streaming token output (real-time rendering)</li>
- *   <li>Slash commands: /help, /exit, /model, /tools, /clear, /continue</li>
+ *   <li>Slash commands: /help, /exit, /model, /tools, /clear, /resume</li>
  *   <li>Multi-line input with {@code \} line continuation</li>
+ *   <li>Auto-save session to {@code ~/.claw-java/sessions/}</li>
  * </ul>
  */
 public class ClawRepl {
@@ -65,6 +66,7 @@ public class ClawRepl {
 
                 if (line == null) {
                     // EOF
+                    saveSession();
                     terminal.writer().println("Goodbye!");
                     terminal.flush();
                     try { terminal.close(); } catch (java.io.IOException ignored) {}
@@ -84,6 +86,7 @@ public class ClawRepl {
 
                 // Process command or chat
                 if (handleCommand(line, terminal)) {
+                    saveSession();
                     try { terminal.close(); } catch (java.io.IOException ignored) {}
                     return; // exit
                 }
@@ -92,11 +95,21 @@ public class ClawRepl {
                 terminal.writer().println("^C (type /exit to quit)");
                 terminal.flush();
             } catch (EndOfFileException e) {
+                saveSession();
                 terminal.writer().println("Goodbye!");
                 terminal.flush();
                 try { terminal.close(); } catch (java.io.IOException ignored) {}
                 return;
             }
+        }
+    }
+
+    private void saveSession() {
+        try {
+            SessionStore.save(context.engine().getSessionId(),
+                    context.model(), context.provider().name(),
+                    context.engine().getConversation());
+        } catch (Exception ignored) {
         }
     }
 
@@ -139,19 +152,7 @@ public class ClawRepl {
                 terminal.flush();
                 yield false;
             }
-            case "/continue" -> {
-                terminal.writer().println("Continuing last conversation...");
-                terminal.flush();
-                try {
-                    String response = context.engine().continue_();
-                    terminal.writer().println(response);
-                    terminal.writer().println();
-                } catch (Exception e) {
-                    terminal.writer().println("Error: " + e.getMessage());
-                }
-                terminal.flush();
-                yield false;
-            }
+            case "/resume" -> { resumeSession(terminal, null); yield false; }
             default -> handleDefault(line, terminal);
         };
     }
@@ -159,6 +160,8 @@ public class ClawRepl {
     private boolean handleDefault(String line, Terminal terminal) {
         if (line.startsWith("/model ")) {
             switchModel(terminal, line.substring(7).trim());
+        } else if (line.startsWith("/resume ")) {
+            resumeSession(terminal, line.substring(8).trim());
         } else if (line.startsWith("/")) {
             terminal.writer().println("Unknown command: " + line + " (type /help for commands)");
             terminal.flush();
@@ -166,6 +169,41 @@ public class ClawRepl {
             chat(terminal, line);
         }
         return false;
+    }
+
+    private void resumeSession(Terminal terminal, String id) {
+        if (id != null && !id.isBlank()) {
+            var conv = SessionStore.load(id);
+            if (conv == null) {
+                terminal.writer().println("Session not found: " + id);
+                terminal.flush();
+                return;
+            }
+            context.restoreConversation(conv);
+            context.engine().setOnToken(token -> {
+                terminal.writer().print(token);
+                terminal.flush();
+            });
+            terminal.writer().println("Session restored: " + id + " ("
+                    + conv.messageCount() + " messages)");
+            terminal.flush();
+            return;
+        }
+
+        // No id — list available sessions
+        var sessions = SessionStore.list();
+        if (sessions.isEmpty()) {
+            terminal.writer().println("No saved sessions.");
+            terminal.flush();
+            return;
+        }
+        terminal.writer().println("Saved sessions:");
+        for (var s : sessions) {
+            terminal.writer().printf("  %s  %s  %s  %d msgs\n",
+                    s.shortId(), s.time(), s.model(), s.messageCount());
+        }
+        terminal.writer().println("Use /resume <id> to restore a session.");
+        terminal.flush();
     }
 
     private void showHelp(Terminal terminal) {
@@ -176,7 +214,7 @@ public class ClawRepl {
               /model <name>   Switch to a different model
               /tools          List all registered tools
               /clear          Clear conversation history
-              /continue       Continue the last conversation
+              /resume [id]    List or restore saved sessions
             """);
         terminal.flush();
     }
@@ -208,9 +246,9 @@ public class ClawRepl {
     private void chat(Terminal terminal, String userMessage) {
         try {
             String response = context.engine().chat(userMessage);
-            // Print a newline after streaming output for separation
             terminal.writer().println();
             terminal.flush();
+            saveSession();
         } catch (Exception e) {
             terminal.writer().println("Error: " + e.getMessage());
             terminal.flush();

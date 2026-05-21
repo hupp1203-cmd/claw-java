@@ -4,8 +4,10 @@ import com.claw.core.AgentConfig;
 import com.claw.core.AgentLoop;
 import com.claw.core.AgentLoop.LoopResponse;
 import com.claw.core.QueryEngine;
+import com.claw.core.model.Conversation;
 import com.claw.core.model.ToolCall;
 import com.claw.core.model.ToolResult;
+import com.claw.core.permission.PermissionLevel;
 import com.claw.provider.*;
 import com.claw.tools.Tool;
 import com.claw.tools.ToolRegistry;
@@ -19,7 +21,6 @@ import com.claw.tools.builtin.WriteFileTool;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.function.Consumer;
 
 /**
  * Application context that wires together all components (manual DI).
@@ -61,23 +62,36 @@ public class ClawContext {
         this.engine = createEngine();
     }
 
+    public void restoreConversation(Conversation conv) {
+        var cfg = AgentConfig.of(model, config.provider(), config.maxTokens(),
+                config.systemPrompt(), config.maxToolRounds(), config.workingDirectory());
+        this.engine = new QueryEngine(cfg, createProviderCallback(cfg),
+                createToolExecutor(), PermissionLevel.ALLOW_ALL);
+        for (var msg : conv.getMessages()) {
+            engine.getConversation().addMessage(msg);
+        }
+        if (conv.getSystemPrompt() != null) {
+            engine.getConversation().setSystemPrompt(conv.getSystemPrompt());
+        }
+    }
+
     private QueryEngine createEngine() {
         var cfg = AgentConfig.of(model, config.provider(), config.maxTokens(),
                 config.systemPrompt(), config.maxToolRounds(), config.workingDirectory());
+        return new QueryEngine(cfg, createProviderCallback(cfg), createToolExecutor());
+    }
 
-        // Provider bridge: ProviderRequest (core types) → ProviderResponse → LoopResponse
-        AgentLoop.ProviderCallback providerCb = (messages, onToken) -> {
+    private AgentLoop.ProviderCallback createProviderCallback(AgentConfig cfg) {
+        return (messages, onToken) -> {
             var req = new ProviderRequest(model, messages,
                     cfg.maxTokens(), 0.7,
                     toToolDefs(toolRegistry.listAll()));
             try {
-                // Use streaming if onToken is provided
                 if (onToken != null) {
                     var result = new java.util.concurrent.atomic.AtomicReference<ProviderResponse>();
                     try {
                         provider.completeStreaming(req, onToken, result::set);
                     } catch (IOException e) {
-                        // Fall back to non-streaming on streaming failure
                         ProviderResponse resp = provider.complete(req);
                         if (resp instanceof ProviderResponse.TextResponse t) {
                             onToken.accept(t.content());
@@ -97,9 +111,10 @@ public class ClawContext {
                 throw new AgentLoop.AgentLoopException("Interrupted", e);
             }
         };
+    }
 
-        // Tool bridge: core ToolCall → registry lookup
-        AgentLoop.ToolExecutor toolExec = call -> {
+    private AgentLoop.ToolExecutor createToolExecutor() {
+        return call -> {
             try {
                 String result = toolRegistry.execute(call.name(), call.arguments());
                 return ToolResult.success(call.id(), result);
@@ -107,8 +122,6 @@ public class ClawContext {
                 return ToolResult.error(call.id(), "Tool error: " + e.getMessage());
             }
         };
-
-        return new QueryEngine(cfg, providerCb, toolExec);
     }
 
     /** Bridge ProviderResponse → LoopResponse. */
@@ -133,11 +146,10 @@ public class ClawContext {
     }
 
     /**
-     * Creates a default context with all built-in tools registered
-     * and the Anthropic provider as default.
+     * Creates a default context with all built-in tools registered.
      *
-     * <p>API keys are resolved from: env var → {@code ./.claw-java/config} →
-     * {@code ~/.claw-java/config}.</p>
+     * <p>API keys are resolved from: env var → {@code ~/.claw-java/config} →
+     * {@code ./.claw-java/config}.</p>
      */
     public static ClawContext createDefault() {
         try {
