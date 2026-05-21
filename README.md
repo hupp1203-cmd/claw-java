@@ -131,6 +131,12 @@ claw-cli/        3 Java files  (ClawApplication, ClawRepl, ClawContext)
 | 权限 | `permission/` | `PermissionManager` + `PermissionLevel` enum |
 | 状态管理 | Zustand store | 手动 DI (ClawContext) |
 
+## 🎮 Demo
+
+飞机大战游戏由 Claw-Java 自主升级：[hupp1203-cmd.github.io/plane-war](https://hupp1203-cmd.github.io/plane-war/)
+
+> 升级内容：WASD 键盘控制、3条命系统、localStorage 最高分 — 全部由 Claw-Java 自主完成。
+
 ## ⚠️ 免责声明
 
 本项目**仅供学习研究**。基于对 Anthropic Claude Code 泄露源码的架构分析（非代码复制），用 Java 重新实现了相同的架构模式。不包含 Anthropic 的专有代码、训练数据或模型权重。
