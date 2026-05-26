@@ -1,6 +1,6 @@
 # 🦞 Claw-Java
 
-**Claude Code 架构的 Java 21 移植版** — 从泄露的 TypeScript 源码分析后，用 Java 重新实现的 Agent 核心引擎。
+**类比Claude Code 架构的 Java 21 Agent** — 用 Java 实现的 Agent 核心引擎。
 
 > 📖 学习项目，不是 Claude Code 的替代品。目标是让你理解 Agent 的架构精髓，而不是绕过 Anthropic 的定价。
 
