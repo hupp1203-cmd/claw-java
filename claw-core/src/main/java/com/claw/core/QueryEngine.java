@@ -206,12 +206,114 @@ public class QueryEngine {
     }
 
     /**
-     * Manually triggers conversation compaction.
+     * Manually triggers simple compaction (trim, no model call).
      *
      * @see Conversation#compact()
      */
     public void compact() {
         conversation.compact();
+    }
+
+    private static final String COMPACT_PROMPT = """
+            Your task is to create a detailed summary of the conversation so far, \
+            paying close attention to the user's explicit requests and your previous actions.
+            This summary will be used as context for a new conversation window, \
+            so it must capture all essential information to allow continuing the work \
+            seamlessly without losing any important context.
+
+            Your summary MUST include the following sections:
+
+            1. Primary Request and Intent
+               - What is the user's main goal or task?
+               - Any explicit constraints or requirements mentioned
+
+            2. Key Technical Concepts
+               - Technologies, frameworks, or patterns discussed
+               - Important technical decisions made and why
+
+            3. Files and Code
+               - All files examined, created, or modified (with full paths)
+               - Key code changes and their purpose
+               - Current state of any in-progress work
+
+            4. Errors and Solutions
+               - Any errors encountered and how they were resolved
+               - Remaining issues or known limitations
+
+            5. Next Steps
+               - What still needs to be done (if anything was left incomplete)
+               - Any pending decisions or questions for the user
+
+            Write the summary in the same language the user used. \
+            Be thorough — this summary replaces the entire conversation history.""";
+
+    /**
+     * Compacts conversation by asking the model to produce a structured summary,
+     * then replacing all messages with that summary injected into the system prompt.
+     * This matches Claude Code's /compact behavior.
+     *
+     * @return the summary text, or null if conversation is empty or on failure
+     */
+    public String compactWithSummary() {
+        if (conversation.messageCount() == 0) return null;
+
+        int beforeCount = conversation.messageCount();
+        int beforeTokens = conversation.estimateTokens();
+        log.info("compactWithSummary: {} messages, ~{} tokens", beforeCount, beforeTokens);
+
+        // One-shot summarization: send full history + compact prompt, no tools
+        var summaryConv = new Conversation();
+        summaryConv.addMessage(Message.user(buildHistoryText() + "\n\n" + COMPACT_PROMPT));
+
+        String summary;
+        try {
+            summary = loop.run(summaryConv, provider, call -> {
+                throw new RuntimeException("tools not available during compaction");
+            }, null);
+        } catch (Exception e) {
+            log.warn("compactWithSummary failed, falling back to trim-compact: {}", e.getMessage());
+            conversation.compact();
+            return null;
+        }
+
+        // Replace history: keep original system prompt, inject summary as context block
+        String originalSystemPrompt = conversation.getSystemPrompt();
+        conversation.clear();
+        String newSystemPrompt = (originalSystemPrompt != null ? originalSystemPrompt + "\n\n" : "") +
+                "<conversation_summary>\n" + summary + "\n</conversation_summary>";
+        conversation.setSystemPrompt(newSystemPrompt);
+        systemPromptInjected = true;
+
+        log.info("compactWithSummary complete: {} msgs ~{} tokens → summary {} chars",
+                beforeCount, beforeTokens, summary.length());
+        return summary;
+    }
+
+    private String buildHistoryText() {
+        var sb = new StringBuilder();
+        sb.append("<conversation_history>\n");
+        for (var msg : conversation.getMessages()) {
+            String role = msg.role().name().toLowerCase();
+            if (msg.hasToolCalls()) {
+                sb.append("<").append(role).append(">\n");
+                for (var tc : msg.toolCalls()) {
+                    sb.append("[tool_call: ").append(tc.name())
+                      .append("] ").append(tc.arguments()).append("\n");
+                }
+                sb.append("</").append(role).append(">\n");
+            } else if (msg.toolCallId() != null) {
+                sb.append("<tool_result id=\"").append(msg.toolCallId()).append("\">\n")
+                  .append(msg.textContent() != null ? msg.textContent() : "")
+                  .append("\n</tool_result>\n");
+            } else {
+                String content = msg.textContent() != null ? msg.textContent() : "";
+                sb.append("<").append(role).append(">\n")
+                  .append(content).append("\n")
+                  .append("</").append(role).append(">\n");
+            }
+        }
+        sb.append("</conversation_history>");
+        return sb.toString();
     }
 
     /** Returns the total number of messages in the conversation. */

@@ -291,7 +291,7 @@ public abstract class OpenAiCompatibleProvider implements Provider {
 
         String json;
         try {
-            json = MAPPER.writeValueAsString(body);
+            json = MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(body);
         } catch (Exception e) {
             throw new RuntimeException("Failed to serialize request", e);
         }

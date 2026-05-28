@@ -182,7 +182,12 @@ public class ClawContext {
         }
         String defaultProvider = ProviderRegistry.listAll().getFirst();
         String defaultModel = switch (defaultProvider) {
-            case "deepseek" -> "deepseek-chat";
+            case "deepseek" -> {
+                String configured = com.claw.core.ClawConfig.get("DEEPSEEK_DEFAULT_MODEL");
+                yield (configured != null && !configured.isBlank())
+                        ? configured
+                        : com.claw.provider.DeepSeekProvider.MODEL_PRO;
+            }
             case "openai" -> "gpt-4o";
             default -> "claude-sonnet-4-20250514";
         };

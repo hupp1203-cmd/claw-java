@@ -81,6 +81,10 @@ public final class ClawConfig {
                     # DEEPSEEK_API_KEY=sk-...
                     # ANTHROPIC_API_KEY=sk-ant-...
                     # OPENAI_API_KEY=sk-...
+                    #
+                    # DeepSeek options:
+                    # DEEPSEEK_DEFAULT_MODEL=deepseek-v4-pro[1m]
+                    # DEEPSEEK_API_ENDPOINT=https://api.deepseek.com/v1/chat/completions
                     """);
             log.info("Created config template at {}", USER_CONFIG);
         } catch (IOException e) {

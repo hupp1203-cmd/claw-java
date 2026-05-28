@@ -153,6 +153,7 @@ public class ClawRepl {
                 yield false;
             }
             case "/resume" -> { resumeSession(terminal, null); yield false; }
+            case "/compact" -> { compactConversation(terminal); yield false; }
             default -> handleDefault(line, terminal);
         };
     }
@@ -214,6 +215,7 @@ public class ClawRepl {
               /model <name>   Switch to a different model
               /tools          List all registered tools
               /clear          Clear conversation history
+              /compact        Summarize and compress conversation history
               /resume [id]    List or restore saved sessions
             """);
         terminal.flush();
@@ -241,6 +243,29 @@ public class ClawRepl {
         });
         terminal.writer().println("Switched to model: " + modelName);
         terminal.flush();
+    }
+
+    private void compactConversation(Terminal terminal) {
+        int before = context.engine().messageCount();
+        if (before == 0) {
+            terminal.writer().println("Nothing to compact.");
+            terminal.flush();
+            return;
+        }
+        terminal.writer().println("Compacting conversation (" + before + " messages)...");
+        terminal.flush();
+        try {
+            String summary = context.engine().compactWithSummary();
+            if (summary != null) {
+                terminal.writer().println("Compacted to summary (" + summary.length() + " chars).");
+            } else {
+                terminal.writer().println("Compacted.");
+            }
+        } catch (Exception e) {
+            terminal.writer().println("Compact failed: " + e.getMessage());
+        }
+        terminal.flush();
+        saveSession();
     }
 
     private void chat(Terminal terminal, String userMessage) {
