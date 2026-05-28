@@ -34,10 +34,12 @@ public class ClawRepl {
         try {
             this.terminal = TerminalBuilder.builder()
                     .system(true)
-                    .dumb(true)  // fallback for non-TTY environments
                     .build();
             this.reader = LineReaderBuilder.builder()
                     .terminal(terminal)
+                    .variable(LineReader.HISTORY_SIZE, 200)
+                    .option(LineReader.Option.HISTORY_IGNORE_DUPS, true)
+                    .option(LineReader.Option.HISTORY_IGNORE_SPACE, true)
                     .build();
         } catch (IOException e) {
             throw new RuntimeException("Failed to initialize JLine terminal", e);
