@@ -81,7 +81,7 @@ public class ClawContext {
         return new QueryEngine(cfg, createProviderCallback(cfg), createToolExecutor());
     }
 
-    private AgentLoop.ProviderCallback createProviderCallback(AgentConfig cfg) {
+    AgentLoop.ProviderCallback createProviderCallback(AgentConfig cfg) {
         return (messages, onToken) -> {
             var req = new ProviderRequest(model, messages,
                     cfg.maxTokens(), 0.7,
@@ -113,7 +113,7 @@ public class ClawContext {
         };
     }
 
-    private AgentLoop.ToolExecutor createToolExecutor() {
+    AgentLoop.ToolExecutor createToolExecutor() {
         return call -> {
             try {
                 String result = toolRegistry.execute(call.name(), call.arguments());
@@ -209,6 +209,15 @@ public class ClawContext {
                 You can read/write files, execute shell commands, search code, and fetch web pages. \
                 Always identify yourself as Claw (🦞), never as Claude or any other assistant. \
                 Respond in the same language the user uses.""");
-        return new ClawContext(ProviderRegistry.defaultProvider(), registry, cfg, defaultModel);
+
+        var context = new ClawContext(ProviderRegistry.defaultProvider(), registry, cfg, defaultModel);
+
+        // Register DispatchTool after context is created so we can pass provider/executor refs
+        registry.register(new DispatchTool(
+                cfg,
+                context.createProviderCallback(cfg),
+                context.createToolExecutor()));
+
+        return context;
     }
 }
