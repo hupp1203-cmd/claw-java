@@ -32,9 +32,20 @@ public class ClawRepl {
     public ClawRepl(ClawContext context) {
         this.context = context;
         try {
-            this.terminal = TerminalBuilder.builder()
-                    .system(true)
-                    .build();
+            Terminal t;
+            try {
+                t = TerminalBuilder.builder()
+                        .system(true)
+                        .jansi(true)
+                        .build();
+            } catch (Exception e) {
+                // fallback for environments where jansi is unavailable
+                t = TerminalBuilder.builder()
+                        .system(true)
+                        .dumb(true)
+                        .build();
+            }
+            this.terminal = t;
             this.reader = LineReaderBuilder.builder()
                     .terminal(terminal)
                     .variable(LineReader.HISTORY_SIZE, 200)
@@ -272,7 +283,7 @@ public class ClawRepl {
 
     private void chat(Terminal terminal, String userMessage) {
         try {
-            String response = context.engine().chat(userMessage);
+            context.engine().chat(userMessage);
             terminal.writer().println();
             terminal.flush();
             saveSession();

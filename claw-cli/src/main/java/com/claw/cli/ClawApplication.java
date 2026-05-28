@@ -17,6 +17,9 @@ public class ClawApplication {
     private static final String WORKDIR_PROP = "claw.workdir";
 
     public static void main(String[] args) {
+        // Force JLine to use jansi for ANSI support in non-TTY environments (e.g. IDEA Run window)
+        System.setProperty("org.jline.terminal.jansi", "true");
+
         // Allow overriding working directory via system property or .claw-java/config
         String workdir = System.getProperty(WORKDIR_PROP);
         if (workdir == null || workdir.isBlank()) {
