@@ -173,7 +173,14 @@ public final class DeepSeekAnthropicProvider implements Provider {
             @Override
             public void onFailure(EventSource es, Throwable t, okhttp3.Response resp) {
                 if (done.compareAndSet(false, true)) {
-                    log.error("SSE stream failure", t);
+                    String respBody = "";
+                    if (resp != null && resp.body() != null) {
+                        try { respBody = resp.body().string(); } catch (Exception ignored) {}
+                    }
+                    log.error("SSE stream failure (HTTP {}): {} | body: {}",
+                            resp != null ? resp.code() : "?",
+                            t != null ? t.getMessage() : "null",
+                            respBody);
                     deliverResult();
                 }
                 if (!future.isDone()) {
@@ -209,10 +216,17 @@ public final class DeepSeekAnthropicProvider implements Provider {
         body.put("model", pr.model());
         body.put("max_tokens", pr.maxTokens() > 0 ? pr.maxTokens() : DEFAULT_MAX_TOKENS);
         if (stream) body.put("stream", true);
+        // Disable thinking mode — tool calls require thinking blocks to be echoed back,
+        // but our message model doesn't store them. Disable to keep multi-turn tool use working.
+        body.putObject("thinking").put("type", "disabled");
 
         ArrayNode messagesArray = body.putArray("messages");
 
-        for (var msg : pr.messages()) {
+        List<Message> msgs = pr.messages();
+        int i = 0;
+        while (i < msgs.size()) {
+            Message msg = msgs.get(i);
+
             if (msg.role() == Message.Role.SYSTEM) {
                 String sysContent = msg.textContent();
                 if (sysContent != null && !sysContent.isBlank()) {
@@ -222,37 +236,45 @@ public final class DeepSeekAnthropicProvider implements Provider {
                         body.put("system", sysContent);
                     }
                 }
-            } else {
+                i++;
+            } else if (msg.hasToolCalls()) {
+                // assistant message with tool_use blocks
                 ObjectNode m = messagesArray.addObject();
-
-                if (msg.hasToolCalls()) {
-                    // assistant message containing tool_use blocks
-                    m.put("role", "assistant");
-                    ArrayNode content = m.putArray("content");
-                    String text = msg.textContent();
-                    if (text != null && !text.isBlank()) {
-                        content.addObject().put("type", "text").put("text", text);
-                    }
-                    for (var tc : msg.toolCalls()) {
-                        ObjectNode tcNode = content.addObject();
-                        tcNode.put("type", "tool_use");
-                        tcNode.put("id", tc.id());
-                        tcNode.put("name", tc.name());
-                        tcNode.set("input", MAPPER.valueToTree(tc.arguments()));
-                    }
-                } else if (msg.toolCallId() != null) {
-                    // tool result must use role "user" in Anthropic protocol
-                    m.put("role", "user");
-                    ArrayNode content = m.putArray("content");
+                m.put("role", "assistant");
+                ArrayNode content = m.putArray("content");
+                String text = msg.textContent();
+                if (text != null && !text.isBlank()) {
+                    content.addObject().put("type", "text").put("text", text);
+                }
+                for (var tc : msg.toolCalls()) {
+                    ObjectNode tcNode = content.addObject();
+                    tcNode.put("type", "tool_use");
+                    tcNode.put("id", tc.id());
+                    tcNode.put("name", tc.name());
+                    tcNode.set("input", MAPPER.valueToTree(tc.arguments()));
+                }
+                i++;
+            } else if (msg.toolCallId() != null) {
+                // Collect ALL consecutive tool_result messages into one user message.
+                // Anthropic requires all tool_results for a given assistant turn to be
+                // in a single user message content array.
+                ObjectNode m = messagesArray.addObject();
+                m.put("role", "user");
+                ArrayNode content = m.putArray("content");
+                while (i < msgs.size() && msgs.get(i).toolCallId() != null) {
+                    Message toolMsg = msgs.get(i);
                     ObjectNode result = content.addObject();
                     result.put("type", "tool_result");
-                    result.put("tool_use_id", msg.toolCallId());
-                    result.put("content", msg.textContent() != null ? msg.textContent() : "");
-                } else {
-                    m.put("role", msg.role().name().toLowerCase());
-                    String content = msg.textContent();
-                    if (content != null) m.put("content", content);
+                    result.put("tool_use_id", toolMsg.toolCallId());
+                    result.put("content", toolMsg.textContent() != null ? toolMsg.textContent() : "");
+                    i++;
                 }
+            } else {
+                ObjectNode m = messagesArray.addObject();
+                m.put("role", msg.role().name().toLowerCase());
+                String content = msg.textContent();
+                if (content != null) m.put("content", content);
+                i++;
             }
         }
 
