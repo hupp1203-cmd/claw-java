@@ -18,8 +18,8 @@ import java.util.List;
  */
 public final class DeepSeekProvider extends OpenAiCompatibleProvider {
 
-    public static final String MODEL_PRO   = "deepseek-v4-pro[1m]";
-    public static final String MODEL_FLASH = "deepseek-v4-flash[1m]";
+    public static final String MODEL_PRO   = "deepseek-v4-pro";
+    public static final String MODEL_FLASH = "deepseek-v4-flash";
 
     private static final String DEFAULT_ENDPOINT =
             "https://api.deepseek.com/v1/chat/completions";
