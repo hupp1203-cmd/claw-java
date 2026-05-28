@@ -95,7 +95,7 @@ public final class SubAgent {
         }
 
         static SubAgentResult failure(String name, String task, String error) {
-            return new SubAgentResult(name, task, null, error, true);
+            return new SubAgentResult(name, task, null, error, false);
         }
 
         /** Returns result text, or an error marker if failed. */

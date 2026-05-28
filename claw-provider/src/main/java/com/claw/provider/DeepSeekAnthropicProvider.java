@@ -295,9 +295,6 @@ public final class DeepSeekAnthropicProvider implements Provider {
             throw new RuntimeException("Failed to serialize request", e);
         }
 
-        log.info("curl -X POST '{}' \\\n  -H 'Authorization: Bearer ***' \\\n  -H 'Content-Type: application/json' \\\n  -d '{}'",
-                apiUrl(), json.replace("'", "'\\''"));
-
         return new Request.Builder()
                 .url(apiUrl())
                 .post(RequestBody.create(json, JSON))

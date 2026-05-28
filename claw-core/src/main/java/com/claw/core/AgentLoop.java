@@ -155,13 +155,12 @@ public class AgentLoop {
                 }
             }
 
-            // If this was the last allowed round, give the model one more chance
+            // If this was the last allowed round, execute any pending tool calls then get final answer
             if (round == config.maxToolRounds() - 1) {
                 log.warn("Reached maximum tool rounds ({})", config.maxToolRounds());
                 conversation.addMessage(Message.system(
-                        "Maximum tool rounds reached. Provide your final answer now."));
+                        "Maximum tool rounds reached. Summarize what you have found so far and provide your final answer now."));
 
-                // Call provider one more time so the model can respond to the system message
                 try {
                     List<Message> finalMessages = conversation.buildModelMessages();
                     LoopResponse finalResponse = provider.complete(finalMessages, onToken);
@@ -169,17 +168,40 @@ public class AgentLoop {
                         responseBuilder.append(text);
                         conversation.addMessage(Message.assistant(text));
                     } else if (finalResponse instanceof LoopResponse.ToolUse(var text, var toolCalls)) {
-                        if (!toolCalls.isEmpty()) {
-                            log.warn("Model still requesting tools after max rounds, returning partial result");
-                        }
+                        // Model still wants tools — execute them so it has the data, then force text
                         if (text != null && !text.isBlank()) {
                             responseBuilder.append(text);
+                        }
+                        conversation.addMessage(new Message(Message.Role.ASSISTANT,
+                                text != null ? text : "", toolCalls));
+                        for (ToolCall tc : toolCalls) {
+                            ToolResult result;
+                            try {
+                                result = toolExecutor.execute(tc);
+                            } catch (Exception e) {
+                                result = ToolResult.error(tc.id(), "Tool execution error: " + e.getMessage());
+                            }
+                            conversation.addMessage(Message.tool(result.toolCallId(),
+                                    (result.isError() ? "[ERROR] " : "") + result.content()));
+                        }
+                        // One final call — tools are no longer available
+                        try {
+                            LoopResponse forcedResponse = provider.complete(
+                                    conversation.buildModelMessages(), onToken);
+                            if (forcedResponse instanceof LoopResponse.Text(var t)) {
+                                responseBuilder.append(t);
+                                conversation.addMessage(Message.assistant(t));
+                            } else if (forcedResponse instanceof LoopResponse.ToolUse(var t, var ignored)) {
+                                if (t != null && !t.isBlank()) responseBuilder.append(t);
+                            }
+                        } catch (Exception e) {
+                            log.error("Failed to get forced final answer: {}", e.getMessage());
                         }
                     }
                 } catch (Exception e) {
                     log.error("Failed to get final answer after max rounds: {}", e.getMessage());
                 }
-            return responseBuilder.toString();
+                return responseBuilder.toString();
             }
         }
 

@@ -121,9 +121,9 @@ public final class DispatchTool implements Tool {
 
         log.info("dispatch_agents: launching {} sub-agents", specs.size());
 
-        // Sub-agents use reduced maxToolRounds to avoid runaway nesting
+        // Sub-agents use a reduced but generous limit to avoid infinite nesting
         AgentConfig subConfig = config.withMaxToolRounds(
-                Math.min(config.maxToolRounds(), 10));
+                Math.min(config.maxToolRounds(), 20));
 
         var dispatcher = new SubAgentDispatcher(subConfig, provider, toolExecutor, AGENT_TIMEOUT);
         return dispatcher.dispatchAndMerge(specs);

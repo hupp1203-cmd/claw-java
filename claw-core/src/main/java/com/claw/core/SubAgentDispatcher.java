@@ -72,11 +72,21 @@ public final class SubAgentDispatcher {
                     .map(agent -> executor.submit(agent::run))
                     .toList();
 
+            long deadline = System.nanoTime() + timeout.toNanos();
+
             for (int i = 0; i < futures.size(); i++) {
                 Future<SubAgent.SubAgentResult> future = futures.get(i);
                 SubAgent agent = agents.get(i);
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    future.cancel(true);
+                    log.warn("[{}] deadline exceeded before collection", agent.name());
+                    results.add(SubAgent.SubAgentResult.failure(
+                            agent.name(), agent.task(), "Global deadline exceeded"));
+                    continue;
+                }
                 try {
-                    SubAgent.SubAgentResult result = future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+                    SubAgent.SubAgentResult result = future.get(remaining, TimeUnit.NANOSECONDS);
                     results.add(result);
                     log.debug("[{}] result collected", agent.name());
                 } catch (java.util.concurrent.TimeoutException e) {

@@ -12,6 +12,7 @@
 - **精确 Token 计数** — 接入 jtokkit (CL100K_BASE)，自动回退到 char/4
 - **权限系统** — PermissionManager 已接入 AgentLoop，支持 NONE/ASK/ALLOW_ALL 三级控制
 - **工作目录穿透** — Tool 接口支持 workingDirectory()，BashTool/文件工具自动遵循
+- **子 Agent 并行** — `dispatch_agents` 工具支持并行派发多个子 Agent，虚拟线程 + 全局 deadline 控制
 
 ## 🏗 架构
 
@@ -34,10 +35,10 @@
 
 | 模块 | 对标源码 | 功能 |
 |------|---------|------|
-| **claw-core** | `packages/agent/query.ts` | AgentLoop（核心循环）、QueryEngine（编排层）、Conversation（会话管理） |
+| **claw-core** | `packages/agent/query.ts` | AgentLoop（核心循环）、QueryEngine（编排层）、Conversation（会话管理）、SubAgentDispatcher（并行子 Agent） |
 | **claw-provider** | `packages/provider/` | Provider SPI、Anthropic/OpenAI/DeepSeek 实现 |
 | **claw-tools** | `packages/tool-registry/` | Tool 接口、注册表、7 个内置工具（Bash/读文件/写文件/grep/edit/web_fetch/find） |
-| **claw-cli** | `packages/cli/` + `packages/repl/` | JLine REPL、命令解析、上下文装配 |
+| **claw-cli** | `packages/cli/` + `packages/repl/` | JLine REPL、命令解析、上下文装配、DispatchTool、SessionStore |
 
 ## 🚀 快速开始
 
@@ -66,6 +67,8 @@ Provider: anthropic | Model: claude-sonnet-4-20250514
 claw> 帮我读一下 pom.xml
 claw> /tools
 claw> /model deepseek-chat
+claw> /resume          # 列出历史会话
+claw> /resume <id>     # 恢复指定会话
 claw> /help
 claw> /exit
 ```
@@ -90,7 +93,12 @@ flowchart TD
     EXEC --> AR[append result<br/>追加到对话]
     AR --> AL
 
-    AL -->|超 25 轮| LIMIT[⚠️ 达到上限<br/>强制返回]
+    AL -->|超 25 轮| LIMIT[⚠️ 达到上限<br/>执行剩余工具后强制返回]
+
+    TC -->|dispatch_agents| DA[SubAgentDispatcher<br/>并行虚拟线程]
+    DA -->|每个子 Agent| SAL[AgentLoop<br/>独立 Conversation]
+    SAL --> DA
+    DA -->|合并结果| AR
 
     subgraph Tools[🔧 内置工具]
         Bash[bash]
@@ -100,6 +108,7 @@ flowchart TD
         Grep[grep]
         Find[find]
         Fetch[web_fetch]
+        Dispatch[dispatch_agents]
     end
 
     EXEC --> Tools
@@ -115,7 +124,7 @@ flowchart TD
     subgraph Session[💾 会话管理]
         Conv[Conversation<br/>消息存储]
         Comp[compact<br/>压缩]
-        Persist[SessionStore<br/>持久化]
+        Persist[SessionStore<br/>~/.claw-java/sessions/]
     end
 
     QE --> Session
@@ -125,35 +134,39 @@ flowchart TD
 
 ## 📁 关键源码导览
 
-### 最值得读的 5 个文件
+### 最值得读的文件
 
 | 文件 | 说明 |
 |------|------|
 | `claw-core/.../AgentLoop.java` | **★ 核心循环** — 最精华的部分，从 `query.ts` 翻译过来 |
+| `claw-core/.../SubAgentDispatcher.java` | 并行子 Agent 调度，虚拟线程 + 全局 deadline |
 | `claw-core/.../QueryEngine.java` | 编排层，管理会话生命周期 |
 | `claw-provider/.../AnthropicProvider.java` | Anthropic Messages API 适配 |
 | `claw-cli/.../ClawContext.java` | 手动依赖注入，桥接各模块 |
-| `claw-tools/.../ToolRegistry.java` | 工具注册与分发 |
+| `claw-cli/.../DispatchTool.java` | `dispatch_agents` 工具实现 |
+| `claw-cli/.../SessionStore.java` | 会话持久化（JSON → `~/.claw-java/sessions/`） |
 
 ### 文件数量
 
 ```
-claw-core/      14 Java files  (AgentLoop, QueryEngine, Message, Conversation, TokenCounter...)
-claw-provider/   6 Java files  (Provider, AnthropicProvider, OpenAI, DeepSeek...)
-claw-tools/      8 Java files  (Tool, ToolRegistry, BashTool, ReadFileTool, EditTool, WebFetchTool...)
-claw-cli/        3 Java files  (ClawApplication, ClawRepl, ClawContext)
+claw-core/      16 Java files  (AgentLoop, QueryEngine, SubAgent, SubAgentDispatcher, Conversation, TokenCounter...)
+claw-provider/   9 Java files  (Provider, AnthropicProvider, OpenAI, DeepSeek, DeepSeekAnthropic...)
+claw-tools/      9 Java files  (Tool, ToolRegistry, BashTool, ReadFileTool, EditTool, WebFetchTool, FindTool...)
+claw-cli/        5 Java files  (ClawApplication, ClawRepl, ClawContext, DispatchTool, SessionStore)
 ```
 
 ## 🔍 与原版的关键对照
 
 | 概念 | Claude Code (TypeScript) | Claw-Java (Java 21) |
 |------|-------------------------|---------------------|
-| 主循环 | `query.ts` 生成器函数 | `AgentLoop.run()` with for 循环 |
+| 主循环 | `query.ts` 生成器函数 | `AgentLoop.run()` for 循环 |
 | 编排器 | `QueryEngine.ts` | `QueryEngine.java` |
+| 子 Agent | `AgentTool` | `SubAgent` + `SubAgentDispatcher` + `DispatchTool` |
 | Provider | `claudeLegacyRuntime.ts` | `AnthropicProvider.java` |
 | 工具注册 | `tool-registry/src/tools/` | `ToolRegistry` + `Tool` interface |
 | 会话压缩 | `Conversation.compact()` | `Conversation.compact()` (相同逻辑) |
 | 权限 | `permission/` | `PermissionManager` + `PermissionLevel` enum |
+| 会话持久化 | append-only JSONL (`~/.claude/projects/`) | 全量 JSON (`~/.claw-java/sessions/`) |
 | 状态管理 | Zustand store | 手动 DI (ClawContext) |
 
 ## 🎮 Demo
