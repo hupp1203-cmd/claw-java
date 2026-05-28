@@ -224,9 +224,10 @@ public final class DeepSeekAnthropicProvider implements Provider {
                 }
             } else {
                 ObjectNode m = messagesArray.addObject();
-                m.put("role", msg.role().name().toLowerCase());
 
                 if (msg.hasToolCalls()) {
+                    // assistant message containing tool_use blocks
+                    m.put("role", "assistant");
                     ArrayNode content = m.putArray("content");
                     String text = msg.textContent();
                     if (text != null && !text.isBlank()) {
@@ -240,12 +241,15 @@ public final class DeepSeekAnthropicProvider implements Provider {
                         tcNode.set("input", MAPPER.valueToTree(tc.arguments()));
                     }
                 } else if (msg.toolCallId() != null) {
+                    // tool result must use role "user" in Anthropic protocol
+                    m.put("role", "user");
                     ArrayNode content = m.putArray("content");
                     ObjectNode result = content.addObject();
                     result.put("type", "tool_result");
                     result.put("tool_use_id", msg.toolCallId());
                     result.put("content", msg.textContent() != null ? msg.textContent() : "");
                 } else {
+                    m.put("role", msg.role().name().toLowerCase());
                     String content = msg.textContent();
                     if (content != null) m.put("content", content);
                 }
