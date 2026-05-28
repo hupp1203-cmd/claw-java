@@ -160,7 +160,7 @@ public class ClawContext {
         }
         try {
             var key = com.claw.core.ClawConfig.get("DEEPSEEK_API_KEY");
-            ProviderRegistry.register(new DeepSeekProvider(key));
+            ProviderRegistry.register(new DeepSeekAnthropicProvider(key));
         } catch (IllegalStateException e) {
             // DEEPSEEK_API_KEY not set — skip
         }
@@ -186,7 +186,7 @@ public class ClawContext {
                 String configured = com.claw.core.ClawConfig.get("DEEPSEEK_DEFAULT_MODEL");
                 yield (configured != null && !configured.isBlank())
                         ? configured
-                        : com.claw.provider.DeepSeekProvider.MODEL_PRO;
+                        : com.claw.provider.DeepSeekAnthropicProvider.MODEL_PRO;
             }
             case "openai" -> "gpt-4o";
             default -> "claude-sonnet-4-20250514";
