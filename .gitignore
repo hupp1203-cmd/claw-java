@@ -8,3 +8,4 @@ target/
 .env
 dependency-reduced-pom.xml
 .claw-java/
+/.claude/settings.json
